@@ -1322,9 +1322,24 @@ class Decoder(srd.Decoder):
                 self.line_events(self.wait({'skip': 0}))
 
             if not self.hasT0 and not self.hasT1:
-                bs = self.bit_samples or int(self.clock_skip * 3)
-                self.wait({'skip': int(bs)})
-                return True
+                # For mid-session captures with explicit protocol,
+                # infer T=0/T=1 from the user setting since there's
+                # no ATR to derive the protocol from.
+                if self.explicit_protocol:
+                    if self.options['protocol'] == "T=0":
+                        self.hasT0 = True
+                    elif self.options['protocol'] == "T=1":
+                        self.hasT1 = True
+                    else:
+                        # Unknown protocol, wait for RST/ATR
+                        bs = self.bit_samples or int(self.clock_skip * 3)
+                        self.wait({'skip': int(bs)})
+                        return True
+                else:
+                    # No explicit protocol, wait for RST/ATR
+                    bs = self.bit_samples or int(self.clock_skip * 3)
+                    self.wait({'skip': int(bs)})
+                    return True
 
             firstByte = self.peek_byte();
             if (firstByte == 0xFF): # PPS Request
