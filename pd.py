@@ -1403,14 +1403,19 @@ class Decoder(srd.Decoder):
                                     got_sw = True
                                     break
                     else:
-                        # Case 3/4: P3 command-data bytes, then procedure byte.
+                        # Case 2/3/4: determine data direction from P3 and
+                        # the first post-header byte.
                         packet.append(pb0)
-                        for _ in range(max(p3 - 1, 0)):
-                            packet.append(self.read_byte())
-                        for _proc in range(32):
-                            pb = self.read_byte()
-                            if (pb == bIns):
-                                # ACK: case 4 -> read response until SW.
+                        if (p3 == 0):
+                            # P3=0 (Le=0): no command data.  Card sends
+                            # response data + SW, or SW directly (no ACK).
+                            if ((pb0 & 0xF0) == 0x60
+                                    or (pb0 & 0xF0) == 0x90):
+                                # pb0 is SW1: card sent SW directly.
+                                packet.append(self.read_byte())
+                                got_sw = True
+                            else:
+                                # pb0 is response data: read until SW.
                                 for _ in range(512):
                                     b = self.read_byte()
                                     packet.append(b)
@@ -1419,34 +1424,52 @@ class Decoder(srd.Decoder):
                                         packet.append(self.read_byte())
                                         got_sw = True
                                         break
-                                break
-                            elif (pb == 0x60):
-                                # NULL: card busy; next procedure byte.
-                                continue
-                            elif (pb == 0x9e or pb == 0x9f):
-                                # Extended-length procedure byte: L response
-                                # data bytes follow, then the status word.
-                                L = self.read_byte()
-                                for _ in range(L):
-                                    packet.append(self.read_byte())
-                                continue
-                            elif ((pb & 0xF0) == 0x60 or (pb & 0xF0) == 0x90):
-                                # SW1: case 3, no response data.  Append SW2.
-                                packet.append(pb)
+                        else:
+                            # Case 3/4: P3 command-data bytes, then
+                            # procedure byte.
+                            for _ in range(max(p3 - 1, 0)):
                                 packet.append(self.read_byte())
-                                got_sw = True
-                                break
-                            else:
-                                # Unexpected byte: scan for the status word.
-                                for _ in range(512):
-                                    packet.append(pb)
-                                    if ((pb & 0xF0) == 0x60
-                                            or (pb & 0xF0) == 0x90):
+                            for _proc in range(32):
+                                pb = self.read_byte()
+                                if (pb == bIns):
+                                    # ACK: case 4 -> read response until SW.
+                                    for _ in range(512):
+                                        b = self.read_byte()
+                                        packet.append(b)
+                                        if ((b & 0xF0) == 0x60
+                                                or (b & 0xF0) == 0x90):
+                                            packet.append(self.read_byte())
+                                            got_sw = True
+                                            break
+                                    break
+                                elif (pb == 0x60):
+                                    # NULL: card busy; next procedure byte.
+                                    continue
+                                elif (pb == 0x9e or pb == 0x9f):
+                                    # Extended-length procedure byte: L
+                                    # response data bytes follow, then SW.
+                                    L = self.read_byte()
+                                    for _ in range(L):
                                         packet.append(self.read_byte())
-                                        got_sw = True
-                                        break
-                                    pb = self.read_byte()
-                                break
+                                    continue
+                                elif ((pb & 0xF0) == 0x60
+                                        or (pb & 0xF0) == 0x90):
+                                    # SW1: case 3, no response data.
+                                    packet.append(pb)
+                                    packet.append(self.read_byte())
+                                    got_sw = True
+                                    break
+                                else:
+                                    # Unexpected byte: scan for SW.
+                                    for _ in range(512):
+                                        packet.append(pb)
+                                        if ((pb & 0xF0) == 0x60
+                                                or (pb & 0xF0) == 0x90):
+                                            packet.append(self.read_byte())
+                                            got_sw = True
+                                            break
+                                        pb = self.read_byte()
+                                    break
                 else:
                     # ATR-based captures (test_8 / test_7): keep the original
                     # procedure loop unchanged.

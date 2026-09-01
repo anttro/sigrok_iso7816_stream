@@ -1,4 +1,4 @@
-=== Baseline captured 2026-09-01T23:53:10+03:00 ===
+=== Baseline captured 2026-09-02T00:21:04+03:00 ===
 
 === test_8 ATR-included ===
 ('iso7816 decoder v1.0.0',)
