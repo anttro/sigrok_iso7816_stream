@@ -1338,11 +1338,13 @@ class Decoder(srd.Decoder):
                 # 0-2 bit errors).  Re-sync instead of mis-parsing as
                 # a T=0 header (which would pack idle noise into
                 # garbage APDUs).
+                self.peeked_byte = None  # consume the peeked byte
                 self._resync = True
                 return True
             elif not plausible_cla(firstByte):
                 # Non-standard CLA: byte is not a recognized ISO 7816
                 # class.  Likely mis-framed data — attempt to resync.
+                self.peeked_byte = None  # consume the peeked byte
                 self.log("Suspicious CLA 0x{:02x}, attempting resync".format(firstByte))
                 self.put(self.peeked_samplenum, self.peeked_samplenum,
                          self.out_ann, [Ann.ANN_WARN,

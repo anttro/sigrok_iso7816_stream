@@ -1,4 +1,4 @@
-=== Baseline captured 2026-09-01T22:47:07+03:00 ===
+=== Baseline captured 2026-09-01T23:53:10+03:00 ===
 
 === test_8 ATR-included ===
 ('iso7816 decoder v1.0.0',)
@@ -124,6 +124,11 @@ iso7816-1: Invalid TS byte 0x54 - skipped
 ('etu recovered (samples):', 53)
 (11674138, 'CHKSUM ERROR: ', 0, 'bits: ', [0, 0, 0, 1, 0, 0, 1, 1, 1, 1])
 iso7816-1: CHKSUM ERROR bits=[0, 0, 0, 1, 0, 0, 1, 1, 1, 1]
+(11681839, 'CHKSUM ERROR: ', 0, 'bits: ', [0, 0, 0, 0, 0, 0, 1, 1, 0, 1])
+iso7816-1: CHKSUM ERROR bits=[0, 0, 0, 0, 0, 0, 1, 1, 0, 1]
+('etu recovered (samples):', 53)
+iso7816-1: desynced APDU (flagged BAD_FCS)
+iso7816-1: desynced APDU (flagged BAD_FCS)
 
 === samsung_phone_sample ATR-included ===
 ('iso7816 decoder v1.0.0',)
@@ -153,6 +158,21 @@ iso7816-1: Invalid TS byte 0xa0 - skipped
 ('etu recovered (samples):', 72)
 (3273185, 'CHKSUM ERROR: ', 0, 'bits: ', [0, 0, 1, 1, 1, 1, 1, 1, 1, 0])
 iso7816-1: CHKSUM ERROR bits=[0, 0, 1, 1, 1, 1, 1, 1, 1, 0]
+(3274051, 'CHKSUM ERROR: ', 0, 'bits: ', [0, 0, 0, 1, 1, 0, 1, 1, 1, 0])
+iso7816-1: CHKSUM ERROR bits=[0, 0, 0, 1, 1, 0, 1, 1, 1, 0]
+('etu recovered (samples):', 71)
+(21913759, 'CHKSUM ERROR: ', 0, 'bits: ', [0, 0, 0, 0, 0, 0, 0, 0, 1, 0])
+iso7816-1: CHKSUM ERROR bits=[0, 0, 0, 0, 0, 0, 0, 0, 1, 0]
+(21915622, 'CHKSUM ERROR: ', 0, 'bits: ', [0, 0, 0, 0, 0, 1, 1, 1, 1, 1])
+iso7816-1: CHKSUM ERROR bits=[0, 0, 0, 0, 0, 1, 1, 1, 1, 1]
+(21919278, 'CHKSUM ERROR: ', 0, 'bits: ', [0, 0, 1, 0, 1, 1, 1, 1, 1, 1])
+iso7816-1: CHKSUM ERROR bits=[0, 0, 1, 0, 1, 1, 1, 1, 1, 1]
+(21964700, 'CHKSUM ERROR: ', 0, 'bits: ', [0, 0, 0, 1, 0, 0, 0, 0, 0, 0])
+iso7816-1: CHKSUM ERROR bits=[0, 0, 0, 1, 0, 0, 0, 0, 0, 0]
+(22026430, 'CHKSUM ERROR: ', 0, 'bits: ', [1, 1, 1, 1, 1, 1, 0, 0, 0, 1])
+iso7816-1: CHKSUM ERROR bits=[1, 1, 1, 1, 1, 1, 0, 0, 0, 1]
+(22850826, 'CHKSUM ERROR: ', 0, 'bits: ', [0, 0, 0, 0, 0, 0, 0, 0, 1, 0])
+iso7816-1: CHKSUM ERROR bits=[0, 0, 0, 0, 0, 0, 0, 0, 1, 0]
 
 === samsung_phone2_sample ATR-included ===
 ('iso7816 decoder v1.0.0',)
@@ -225,6 +245,22 @@ iso7816-1: Invalid TS byte 0x00 - skipped
 ('etu recovered (samples):', 5723)
 (88920577, 'CHKSUM ERROR: ', 0, 'bits: ', [0, 0, 1, 0, 1, 1, 0, 0, 1, 1])
 iso7816-1: CHKSUM ERROR bits=[0, 0, 1, 0, 1, 1, 0, 0, 1, 1]
+(89006423, 'CHKSUM ERROR: ', 0, 'bits: ', [0, 0, 0, 0, 1, 0, 1, 1, 0, 0])
+iso7816-1: CHKSUM ERROR bits=[0, 0, 0, 0, 1, 0, 1, 1, 0, 0]
+('etu recovered (samples):', 5723)
+(91523622, 'CHKSUM ERROR: ', 0, 'bits: ', [0, 1, 0, 1, 0, 0, 1, 0, 1, 1])
+iso7816-1: CHKSUM ERROR bits=[0, 1, 0, 1, 0, 0, 1, 0, 1, 1]
+(93538756, 'CHKSUM ERROR: ', 0, 'bits: ', [0, 1, 0, 1, 1, 0, 1, 1, 1, 1])
+iso7816-1: CHKSUM ERROR bits=[0, 1, 0, 1, 1, 0, 1, 1, 1, 1]
+(93990452, 'CHKSUM ERROR: ', 0, 'bits: ', [0, 1, 0, 1, 1, 0, 1, 1, 1, 1])
+iso7816-1: CHKSUM ERROR bits=[0, 1, 0, 1, 1, 0, 1, 1, 1, 1]
+(94061540, 'CHKSUM ERROR: ', 0, 'bits: ', [0, 1, 1, 1, 1, 1, 1, 1, 1, 1])
+iso7816-1: CHKSUM ERROR bits=[0, 1, 1, 1, 1, 1, 1, 1, 1, 1]
+(94176315, 'CHKSUM ERROR: ', 0, 'bits: ', [0, 1, 1, 1, 1, 1, 1, 1, 1, 1])
+iso7816-1: CHKSUM ERROR bits=[0, 1, 1, 1, 1, 1, 1, 1, 1, 1]
+(94359324, 'CHKSUM ERROR: ', 0, 'bits: ', [0, 0, 0, 1, 0, 0, 0, 0, 0, 0])
+iso7816-1: CHKSUM ERROR bits=[0, 0, 0, 1, 0, 0, 0, 0, 0, 0]
+(94713191, 'CHKSUM ERROR: ', 0, 'bits: ', [0, 0, 0, 0, 0, 1, 1, 1, 1, 1])
 
 === sim_turnon ATR-included ===
 ('iso7816 decoder v1.0.0',)
@@ -253,6 +289,22 @@ iso7816-1: CHKSUM ERROR bits=[0, 0, 0, 0, 1, 1, 1, 1, 1, 0]
 ('etu recovered (samples):', 2855)
 (108121680, 'CHKSUM ERROR: ', 0, 'bits: ', [0, 0, 1, 0, 1, 1, 0, 0, 1, 1])
 iso7816-1: CHKSUM ERROR bits=[0, 0, 1, 0, 1, 1, 0, 0, 1, 1]
+(108164612, 'CHKSUM ERROR: ', 0, 'bits: ', [0, 0, 0, 0, 1, 0, 1, 1, 0, 0])
+iso7816-1: CHKSUM ERROR bits=[0, 0, 0, 0, 1, 0, 1, 1, 0, 0]
+('etu recovered (samples):', 2853)
+(113061315, 'CHKSUM ERROR: ', 0, 'bits: ', [0, 1, 0, 1, 1, 0, 1, 1, 1, 1])
+iso7816-1: CHKSUM ERROR bits=[0, 1, 0, 1, 1, 0, 1, 1, 1, 1]
+(113113437, 'CHKSUM ERROR: ', 0, 'bits: ', [0, 0, 1, 0, 1, 1, 1, 1, 1, 1])
+iso7816-1: CHKSUM ERROR bits=[0, 0, 1, 0, 1, 1, 1, 1, 1, 1]
+(113281430, 'CHKSUM ERROR: ', 0, 'bits: ', [1, 0, 1, 1, 1, 1, 1, 1, 1, 1])
+iso7816-1: CHKSUM ERROR bits=[1, 0, 1, 1, 1, 1, 1, 1, 1, 1]
+(113312850, 'CHKSUM ERROR: ', 0, 'bits: ', [0, 1, 0, 1, 1, 0, 1, 1, 1, 1])
+iso7816-1: CHKSUM ERROR bits=[0, 1, 0, 1, 1, 0, 1, 1, 1, 1]
+(113430827, 'CHKSUM ERROR: ', 0, 'bits: ', [0, 0, 1, 0, 1, 1, 1, 1, 1, 1])
+iso7816-1: CHKSUM ERROR bits=[0, 0, 1, 0, 1, 1, 1, 1, 1, 1]
+(113607242, 'CHKSUM ERROR: ', 0, 'bits: ', [0, 0, 0, 0, 0, 0, 0, 1, 1, 1])
+iso7816-1: CHKSUM ERROR bits=[0, 0, 0, 0, 0, 0, 0, 1, 1, 1]
+(113636612, 'CHKSUM ERROR: ', 0, 'bits: ', [0, 0, 1, 0, 0, 0, 0, 0, 0, 0])
 
 === unit tests ===
 test_is_desynced_all_zero_is_not_desync (__main__.TestDesyncHelpers.test_is_desynced_all_zero_is_not_desync) ... ok
