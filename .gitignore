@@ -1,0 +1,4 @@
+*.pcap
+*.log
+!examples/*_reader.log
+__pycache__/
