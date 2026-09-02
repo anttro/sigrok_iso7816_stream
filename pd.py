@@ -289,6 +289,10 @@ class Decoder(srd.Decoder):
         # Set after a desync so the next DATA step re-aligns on an
         # inter-frame idle gap before resuming.
         self._resync = False
+        # Set by handle_pps() when an accepted PPS changes the bit rate.
+        # Forces _measure_etu() on the next decode_step() cycle so the
+        # decoder re-locks to the new ETU from the live DATA line.
+        self._pps_speed_changed = False
         # Count of times the ATR hunt failed to find a valid TS byte --
         # bounds the "keep hunting" loop so a mid-session sniffer (no ATR
         # ever present) eventually falls back to T=0 parsing instead of
@@ -336,6 +340,7 @@ class Decoder(srd.Decoder):
             self.state = 'FIND START'
         else:
             self.state = 'DATA'
+        self._atr_parsed = False
         if (self.options['protocol'] == "T=0"):
             self.hasT0 = True
             self.hasT1 = False
@@ -471,20 +476,27 @@ class Decoder(srd.Decoder):
                 self.put(edge_sn, edge_sn, self.out_ann, [Ann.ANN_RST, [text]])
                 self.log(text)
                 fired = True
+                if (emit_lvl == 0):
+                    # RST asserted (LOW): card entering reset state.
+                    # Prepare for the next ATR by re-arming the hunt and
+                    # clearing _atr_parsed so the next RST deassert will
+                    # also re-arm (needed for the first cycle at startup).
+                    self._atr_parsed = False
+                    self.state = 'FIND START'
+                    self._atr_hunt_count = 0
                 if (emit_lvl == 1):
-                    # Reset released: the card will answer with a fresh ATR
-                    # at the default 372 cycles/bit rate.  Re-arm the ATR
-                    # hunt (and reset the bit rate) so the new ATR is parsed
-                    # as such instead of mis-read as TPDU traffic at the old
-                    # PPS-negotiated rate -- unless we are decoding a live
-                    # mid-session capture with an explicit protocol, where
-                    # there is no ATR to re-find and re-arming would just
-                    # desync the stream into an ATR hunt.
-                    if self.starts_with_atr is False and self.explicit_protocol:
-                        self.log("warm reset (mid-session): staying in live decode")
+                    # RST deasserted (HIGH): card released from reset and
+                    # will send a fresh ATR.  However, the 10ms hysteresis
+                    # means this event fires AFTER the ATR has already been
+                    # parsed and the decoder entered DATA state.  In that
+                    # case, stay in DATA so the terminal's T=0 commands
+                    # (which follow the ATR) are decoded.  Only re-arm if
+                    # _atr_parsed is False (startup / first cycle, where no
+                    # ATR has been parsed yet).
+                    if self._atr_parsed:
+                        self.log("warm reset: staying in DATA (ATR already parsed)")
                     else:
                         self.state = 'FIND START'
-                        self.clock_skip = 372
                         self._atr_hunt_count = 0
                         self.log("warm reset: re-arming ATR hunt")
         if (self.track_vcc):
@@ -1098,6 +1110,7 @@ class Decoder(srd.Decoder):
         self.emit_packet(GSMTAP_SIM_ATR, bytes(self.ATR), atr_start, self.samplenum)
 
         self.log("ENDATR", codecs.encode(bytes(self.ATR), 'hex'))
+        self._atr_parsed = True
         self.state = 'DATA'
 
         if (self.options['protocol'] == "T=0"):
@@ -1265,6 +1278,16 @@ class Decoder(srd.Decoder):
                 self.di = self.baud_rate.get(int(pps1 & 0x0F), 1)
                 self.clock_skip = max(int(self.fi // self.di), 1)
                 self.log("PPS accepted: FI", self.fi, "DI", self.di, "clock_skip", self.clock_skip)
+            # PPS changed the bit rate — force ETU re-measurement from the
+            # live DATA line so the decoder reads subsequent bytes at the
+            # correct speed.  _measure_etu() will set _edge_read=True and
+            # lock the new ETU; the first byte after PPS is consumed by
+            # the measurement (acceptable: it would be garbage at the old
+            # speed anyway).
+            self._pps_speed_changed = True
+            self.bit_samples = None
+            self._edge_read = False
+            self._start_fall = None
         else:
             self.log("INVALID PPS. Request & Response not matching.", hex(r_lrc))       
             self.put(ss, self.samplenum, self.out_ann, [0, ["INVALID PPS. Request & Response not matching"]])
@@ -1301,12 +1324,16 @@ class Decoder(srd.Decoder):
             # a single GSMTAP APDU.  (Emitting each idle-split burst verbatim
             # produced fragments, because the card stops CLK during the
             # turn-around and every exchange is split across idle gaps.)
-            if self.starts_with_atr is False and self.explicit_protocol:
-                if self.bit_samples is None:
-                    self._measure_etu()
-                    if self._eof:
-                        return False
-                    return True
+            #
+            # Also re-measure after an accepted PPS changes the bit rate:
+            # the old ETU no longer applies and the new one must be measured
+            # from the live DATA line.
+            if self.bit_samples is None and (self.starts_with_atr is False or self._pps_speed_changed):
+                self._pps_speed_changed = False
+                self._measure_etu()
+                if self._eof:
+                    return False
+                return True
                 # ETU now known: run the standard framing below.
 
             # After a desync, re-align on an inter-frame idle gap so the
@@ -1351,6 +1378,12 @@ class Decoder(srd.Decoder):
                                         ["Suspicious CLA 0x{:02x}".format(firstByte)]])
                 self._resync = True
                 return True
+            elif firstByte == 0x00 and self.zero_run >= 32:
+                # Stuck-low noise: I/O held low for many consecutive frames.
+                # Don't start a T=0 frame with leading zeros.
+                self.peeked_byte = None
+                self._resync = True
+                return True
 
             es = self.peeked_samplenum;
             if (self.hasT0):
@@ -1360,6 +1393,24 @@ class Decoder(srd.Decoder):
                 p2 = self.read_byte()
                 p3 = self.read_byte()
                 packet.extend((bClass, bIns, p1, p2, p3))
+                # All-zero header is never a valid T=0 command.
+                if all(b == 0 for b in packet[:5]):
+                    self.put(es, self.samplenum, self.out_ann,
+                             [Ann.ANN_WARN,
+                              ["all-zero T=0 header (stuck low?)"]])
+                    self._resync = True
+                    return True
+                # T=0 header validation per ISO 7816-4 §12.1.1.
+                # Rejects noise headers that slip past the CLA filter.
+                #  - INS=0x00 is reserved/invalid.
+                #  - MSB nibble 0x6/0x9 conflicts with status words.
+                #  - LSB must be 0 (all standard interindustry commands).
+                if (bIns == 0x00
+                        or (bIns & 0xF0) == 0x60
+                        or (bIns & 0xF0) == 0x90
+                        or (bIns & 0x01) != 0):
+                    self._resync = True
+                    return True
                 # T=0 procedure-byte transport (ISO 7816-3 §10.3.3/10.3.4).
                 # Reassemble the exchange to ISO 7816-4 form (C-APDU = header
                 # + command data, R-APDU = response data + SW1 SW2) into one
@@ -1375,7 +1426,7 @@ class Decoder(srd.Decoder):
                     # treats the first post-header byte as a procedure byte)
                     # therefore mis-frames them.  We distinguish the cases by
                     # the card's first procedure byte:
-                    #   * ACK (== INS) right after the header  -> case 2/4, the
+                    #   * ACK (== INS or ~INS) right after the header  -> case 2/4, the
                     #     terminal sent no command data and the card is
                     #     acknowledging; read P3 response bytes (+SW), or, for
                     #     Le == 0 (GET RESPONSE), read until the SW.
@@ -1383,8 +1434,8 @@ class Decoder(srd.Decoder):
                     #     is terminal command data; read P3 command-data bytes,
                     #     then the card's procedure byte (ACK/SW/9x).
                     pb0 = self.read_byte()
-                    if (pb0 == bIns):
-                        # ACK: case 2/4 (response data follows).
+                    if (pb0 == bIns or pb0 == (bIns ^ 0xFF)):
+                        # ACK (full match or ~INS): case 2/4 (response data follows).
                         if (p3 > 0):
                             for _ in range(p3):
                                 packet.append(self.read_byte())
@@ -1431,8 +1482,8 @@ class Decoder(srd.Decoder):
                                 packet.append(self.read_byte())
                             for _proc in range(32):
                                 pb = self.read_byte()
-                                if (pb == bIns):
-                                    # ACK: case 4 -> read response until SW.
+                                if (pb == bIns or pb == (bIns ^ 0xFF)):
+                                    # ACK (full match / ~INS): case 4 -> read response until SW.
                                     for _ in range(512):
                                         b = self.read_byte()
                                         packet.append(b)
@@ -1442,6 +1493,12 @@ class Decoder(srd.Decoder):
                                             got_sw = True
                                             break
                                     break
+                                elif (pb == (bIns ^ 0x01)
+                                        or pb == ((bIns ^ 0xFF) ^ 0x01)):
+                                    # Single-byte match (INS^0x01 / ~INS^0x01):
+                                    # read 1 byte, continue handshake.
+                                    packet.append(self.read_byte())
+                                    continue
                                 elif (pb == 0x60):
                                     # NULL: card busy; next procedure byte.
                                     continue
@@ -1476,12 +1533,19 @@ class Decoder(srd.Decoder):
                     data_read = False
                     for _proc in range(8):
                         pb = self.read_byte()
-                        if (pb == bIns and not data_read):
-                            # ACK: the P3 bytes follow on the wire (Lc command
-                            # data for case 3, Le response data for case 2).
+                        if (pb == bIns or pb == (bIns ^ 0xFF)) and not data_read:
+                            # ACK (full match / ~INS): the P3 bytes follow on
+                            # the wire (Lc command data for case 3, Le response
+                            # data for case 2).
                             data_read = True
                             for _ in range(p3):
                                 packet.append(self.read_byte())
+                        elif (pb == (bIns ^ 0x01)
+                                or pb == ((bIns ^ 0xFF) ^ 0x01)):
+                            # Single-byte match (INS^0x01 / ~INS^0x01):
+                            # read 1 byte, continue handshake.
+                            packet.append(self.read_byte())
+                            continue
                         elif (pb == 0x60):
                             # NULL: card busy, wait for the next procedure byte.
                             pass

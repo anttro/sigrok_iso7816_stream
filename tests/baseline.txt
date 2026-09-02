@@ -1,4 +1,4 @@
-=== Baseline captured 2026-09-02T00:21:04+03:00 ===
+=== Baseline captured 2026-09-02T12:15:58+03:00 ===
 
 === test_8 ATR-included ===
 ('iso7816 decoder v1.0.0',)
@@ -26,25 +26,25 @@ RESULT: OK - capture fully explained (reader + CAT + valid retries)
 
 === test_8 mid-session ===
 ('iso7816 decoder v1.0.0',)
+('etu recovered (samples):', 1237)
 ('warm reset: re-arming ATR hunt',)
-(173563, 'CHKSUM ERROR: ', 0, 'bits: ', [0, 0, 0, 0, 1, 1, 1, 1, 1, 0])
-iso7816-1: CHKSUM ERROR bits=[0, 0, 0, 0, 1, 1, 1, 1, 1, 0]
-('Invalid TS byte 0xf8 (pre-activation?), resyncing',)
-iso7816-1: Invalid TS byte 0xf8 - skipped
-(184694, 'CHKSUM ERROR: ', 0, 'bits: ', [0, 0, 1, 0, 1, 0, 0, 0, 1, 0])
-iso7816-1: CHKSUM ERROR bits=[0, 0, 1, 0, 1, 0, 0, 0, 1, 0]
-('Invalid TS byte 0x8a (pre-activation?), resyncing',)
-iso7816-1: Invalid TS byte 0x8a - skipped
-('Invalid TS byte 0xf4 (pre-activation?), resyncing',)
-iso7816-1: Invalid TS byte 0xf4 - skipped
-('Invalid TS byte 0xfe (pre-activation?), resyncing',)
-iso7816-1: Invalid TS byte 0xfe - skipped
-('Invalid TS byte 0xda (pre-activation?), resyncing',)
-iso7816-1: Invalid TS byte 0xda - skipped
-('Invalid TS byte 0xfe (pre-activation?), resyncing',)
-iso7816-1: Invalid TS byte 0xfe - skipped
-('Invalid TS byte 0xfe (pre-activation?), resyncing',)
-iso7816-1: Invalid TS byte 0xfe - skipped
+('Invalid TS byte 0x95 (pre-activation?), resyncing',)
+iso7816-1: Invalid TS byte 0x95 - skipped
+('Invalid TS byte 0x7a (pre-activation?), resyncing',)
+iso7816-1: Invalid TS byte 0x7a - skipped
+(7350648, 'CHKSUM ERROR: ', 0, 'bits: ', [0, 0, 0, 1, 1, 1, 1, 1, 1, 1])
+iso7816-1: CHKSUM ERROR bits=[0, 0, 0, 1, 1, 1, 1, 1, 1, 1]
+('Invalid TS byte 0xfc (pre-activation?), resyncing',)
+iso7816-1: Invalid TS byte 0xfc - skipped
+(14324094, 'CHKSUM ERROR: ', 0, 'bits: ', [0, 1, 1, 1, 1, 1, 1, 1, 1, 1])
+iso7816-1: CHKSUM ERROR bits=[0, 1, 1, 1, 1, 1, 1, 1, 1, 1]
+('Invalid TS byte 0xff (pre-activation?), resyncing',)
+iso7816-1: Invalid TS byte 0xff - skipped
+(20245931, 'CHKSUM ERROR: ', 0, 'bits: ', [0, 1, 1, 1, 1, 1, 1, 1, 1, 1])
+iso7816-1: CHKSUM ERROR bits=[0, 1, 1, 1, 1, 1, 1, 1, 1, 1]
+('Invalid TS byte 0xff (pre-activation?), resyncing',)
+iso7816-1: Invalid TS byte 0xff - skipped
+('Invalid TS byte 0xfb (pre-activation?), resyncing',)
   - GARBAGE (mis-framed/desync): 0
 RESULT: OK - capture fully explained (reader + CAT + valid retries)
 
@@ -75,24 +75,24 @@ RESULT: OK - capture fully explained (reader + CAT + valid retries)
 === test_7 mid-session ===
 ('iso7816 decoder v1.0.0',)
 ('warm reset: re-arming ATR hunt',)
-('Invalid TS byte 0xfe (pre-activation?), resyncing',)
-iso7816-1: Invalid TS byte 0xfe - skipped
-(22333768, 'CHKSUM ERROR: ', 0, 'bits: ', [0, 0, 1, 1, 1, 0, 0, 0, 0, 0])
-iso7816-1: CHKSUM ERROR bits=[0, 0, 1, 1, 1, 0, 0, 0, 0, 0]
-('Invalid TS byte 0x0e (pre-activation?), resyncing',)
-iso7816-1: Invalid TS byte 0x0e - skipped
-(22345519, 'CHKSUM ERROR: ', 1, 'bits: ', [0, 0, 0, 0, 1, 1, 1, 1, 0, 1])
-iso7816-1: CHKSUM ERROR bits=[0, 0, 0, 0, 1, 1, 1, 1, 0, 1]
-('Invalid TS byte 0x78 (pre-activation?), resyncing',)
-iso7816-1: Invalid TS byte 0x78 - skipped
-(22356032, 'CHKSUM ERROR: ', 0, 'bits: ', [0, 0, 1, 0, 1, 0, 0, 0, 1, 0])
-iso7816-1: CHKSUM ERROR bits=[0, 0, 1, 0, 1, 0, 0, 0, 1, 0]
-('Invalid TS byte 0x8a (pre-activation?), resyncing',)
-iso7816-1: Invalid TS byte 0x8a - skipped
-('Invalid TS byte 0xf4 (pre-activation?), resyncing',)
-iso7816-1: Invalid TS byte 0xf4 - skipped
-(22378913, 'CHKSUM ERROR: ', 1, 'bits: ', [0, 0, 1, 1, 1, 1, 1, 0, 1, 1])
-iso7816-1: CHKSUM ERROR bits=[0, 0, 1, 1, 1, 1, 1, 0, 1, 1]
+('etu recovered (samples):', 1236)
+('ENDATR', b'3b9f95801fc78031e073fe21136364035b83079000f7')
+('warm reset: staying in DATA (ATR already parsed)',)
+('etu recovered (samples):', 107)
+('warm reset: re-arming ATR hunt',)
+('Invalid TS byte 0x00 (pre-activation?), resyncing',)
+iso7816-1: Invalid TS byte 0x00 - skipped
+('Invalid TS byte 0x00 (pre-activation?), resyncing',)
+iso7816-1: Invalid TS byte 0x00 - skipped
+('Invalid TS byte 0x00 (pre-activation?), resyncing',)
+iso7816-1: Invalid TS byte 0x00 - skipped
+('Invalid TS byte 0x00 (pre-activation?), resyncing',)
+iso7816-1: Invalid TS byte 0x00 - skipped
+('Invalid TS byte 0x00 (pre-activation?), resyncing',)
+iso7816-1: Invalid TS byte 0x00 - skipped
+('Invalid TS byte 0x00 (pre-activation?), resyncing',)
+iso7816-1: Invalid TS byte 0x00 - skipped
+('Invalid TS byte 0x00 (pre-activation?), resyncing',)
   - GARBAGE (mis-framed/desync): 0
 RESULT: OK - capture fully explained (reader + CAT + valid retries)
 
@@ -120,15 +120,25 @@ iso7816-1: Invalid TS byte 0x54 - skipped
 
 === phone_reference mid-session ===
 ('iso7816 decoder v1.0.0',)
-('warm reset (mid-session): staying in live decode',)
+('warm reset: re-arming ATR hunt',)
 ('etu recovered (samples):', 53)
 (11674138, 'CHKSUM ERROR: ', 0, 'bits: ', [0, 0, 0, 1, 0, 0, 1, 1, 1, 1])
 iso7816-1: CHKSUM ERROR bits=[0, 0, 0, 1, 0, 0, 1, 1, 1, 1]
+('Invalid TS byte 0xe4 (pre-activation?), resyncing',)
+iso7816-1: Invalid TS byte 0xe4 - skipped
 (11681839, 'CHKSUM ERROR: ', 0, 'bits: ', [0, 0, 0, 0, 0, 0, 1, 1, 0, 1])
 iso7816-1: CHKSUM ERROR bits=[0, 0, 0, 0, 0, 0, 1, 1, 0, 1]
-('etu recovered (samples):', 53)
-iso7816-1: desynced APDU (flagged BAD_FCS)
-iso7816-1: desynced APDU (flagged BAD_FCS)
+('Invalid TS byte 0x60 (pre-activation?), resyncing',)
+iso7816-1: Invalid TS byte 0x60 - skipped
+(11694256, 'CHKSUM ERROR: ', 0, 'bits: ', [1, 0, 0, 1, 1, 1, 1, 1, 1, 0])
+iso7816-1: CHKSUM ERROR bits=[1, 0, 0, 1, 1, 1, 1, 1, 1, 0]
+('Invalid TS byte 0xfc (pre-activation?), resyncing',)
+iso7816-1: Invalid TS byte 0xfc - skipped
+('Invalid TS byte 0xa8 (pre-activation?), resyncing',)
+iso7816-1: Invalid TS byte 0xa8 - skipped
+('Invalid TS byte 0x23 (pre-activation?), resyncing',)
+iso7816-1: Invalid TS byte 0x23 - skipped
+('Invalid TS byte 0xb1 (pre-activation?), resyncing',)
 
 === samsung_phone_sample ATR-included ===
 ('iso7816 decoder v1.0.0',)
@@ -154,25 +164,25 @@ iso7816-1: Invalid TS byte 0xa0 - skipped
 
 === samsung_phone_sample mid-session ===
 ('iso7816 decoder v1.0.0',)
-('warm reset (mid-session): staying in live decode',)
+('warm reset: re-arming ATR hunt',)
 ('etu recovered (samples):', 72)
 (3273185, 'CHKSUM ERROR: ', 0, 'bits: ', [0, 0, 1, 1, 1, 1, 1, 1, 1, 0])
 iso7816-1: CHKSUM ERROR bits=[0, 0, 1, 1, 1, 1, 1, 1, 1, 0]
+('Invalid TS byte 0xfe (pre-activation?), resyncing',)
+iso7816-1: Invalid TS byte 0xfe - skipped
 (3274051, 'CHKSUM ERROR: ', 0, 'bits: ', [0, 0, 0, 1, 1, 0, 1, 1, 1, 0])
 iso7816-1: CHKSUM ERROR bits=[0, 0, 0, 1, 1, 0, 1, 1, 1, 0]
-('etu recovered (samples):', 71)
-(21913759, 'CHKSUM ERROR: ', 0, 'bits: ', [0, 0, 0, 0, 0, 0, 0, 0, 1, 0])
-iso7816-1: CHKSUM ERROR bits=[0, 0, 0, 0, 0, 0, 0, 0, 1, 0]
-(21915622, 'CHKSUM ERROR: ', 0, 'bits: ', [0, 0, 0, 0, 0, 1, 1, 1, 1, 1])
-iso7816-1: CHKSUM ERROR bits=[0, 0, 0, 0, 0, 1, 1, 1, 1, 1]
-(21919278, 'CHKSUM ERROR: ', 0, 'bits: ', [0, 0, 1, 0, 1, 1, 1, 1, 1, 1])
-iso7816-1: CHKSUM ERROR bits=[0, 0, 1, 0, 1, 1, 1, 1, 1, 1]
-(21964700, 'CHKSUM ERROR: ', 0, 'bits: ', [0, 0, 0, 1, 0, 0, 0, 0, 0, 0])
-iso7816-1: CHKSUM ERROR bits=[0, 0, 0, 1, 0, 0, 0, 0, 0, 0]
-(22026430, 'CHKSUM ERROR: ', 0, 'bits: ', [1, 1, 1, 1, 1, 1, 0, 0, 0, 1])
-iso7816-1: CHKSUM ERROR bits=[1, 1, 1, 1, 1, 1, 0, 0, 0, 1]
-(22850826, 'CHKSUM ERROR: ', 0, 'bits: ', [0, 0, 0, 0, 0, 0, 0, 0, 1, 0])
-iso7816-1: CHKSUM ERROR bits=[0, 0, 0, 0, 0, 0, 0, 0, 1, 0]
+('Invalid TS byte 0xec (pre-activation?), resyncing',)
+iso7816-1: Invalid TS byte 0xec - skipped
+(3286447, 'CHKSUM ERROR: ', 0, 'bits: ', [1, 1, 1, 0, 0, 1, 0, 1, 0, 0])
+iso7816-1: CHKSUM ERROR bits=[1, 1, 1, 0, 0, 1, 0, 1, 0, 0]
+('Invalid TS byte 0x53 (pre-activation?), resyncing',)
+iso7816-1: Invalid TS byte 0x53 - skipped
+(3297773, 'CHKSUM ERROR: ', 0, 'bits: ', [0, 0, 1, 0, 0, 0, 1, 0, 0, 1])
+iso7816-1: CHKSUM ERROR bits=[0, 0, 1, 0, 0, 0, 1, 0, 0, 1]
+('Invalid TS byte 0x22 (pre-activation?), resyncing',)
+iso7816-1: Invalid TS byte 0x22 - skipped
+(3309100, 'CHKSUM ERROR: ', 0, 'bits: ', [0, 0, 0, 0, 0, 0, 0, 0, 0, 1])
 
 === samsung_phone2_sample ATR-included ===
 ('iso7816 decoder v1.0.0',)
@@ -198,25 +208,25 @@ iso7816-1: CHKSUM ERROR bits=[0, 1, 1, 1, 1, 1, 1, 1, 1, 1]
 
 === samsung_phone2_sample mid-session ===
 ('iso7816 decoder v1.0.0',)
-('warm reset (mid-session): staying in live decode',)
+('warm reset: re-arming ATR hunt',)
 ('etu recovered (samples):', 1116)
-('warm reset (mid-session): staying in live decode',)
+('warm reset: re-arming ATR hunt',)
+('Invalid TS byte 0x00 (pre-activation?), resyncing',)
+iso7816-1: Invalid TS byte 0x00 - skipped
+('Invalid TS byte 0xff (pre-activation?), resyncing',)
+iso7816-1: Invalid TS byte 0xff - skipped
+('Invalid TS byte 0xf1 (pre-activation?), resyncing',)
+iso7816-1: Invalid TS byte 0xf1 - skipped
 (25591324, 'CHKSUM ERROR: ', 0, 'bits: ', [0, 1, 1, 1, 0, 0, 0, 0, 0, 0])
 iso7816-1: CHKSUM ERROR bits=[0, 1, 1, 1, 0, 0, 0, 0, 0, 0]
+('Invalid TS byte 0x07 (pre-activation?), resyncing',)
+iso7816-1: Invalid TS byte 0x07 - skipped
+('Invalid TS byte 0xdf (pre-activation?), resyncing',)
+iso7816-1: Invalid TS byte 0xdf - skipped
 (25613716, 'CHKSUM ERROR: ', 0, 'bits: ', [0, 1, 1, 1, 1, 1, 1, 1, 1, 1])
 iso7816-1: CHKSUM ERROR bits=[0, 1, 1, 1, 1, 1, 1, 1, 1, 1]
-(25680707, 'CHKSUM ERROR: ', 0, 'bits: ', [0, 1, 1, 1, 1, 1, 1, 1, 1, 1])
-iso7816-1: CHKSUM ERROR bits=[0, 1, 1, 1, 1, 1, 1, 1, 1, 1]
-(25726689, 'CHKSUM ERROR: ', 0, 'bits: ', [0, 1, 0, 1, 0, 0, 0, 1, 1, 1])
-iso7816-1: CHKSUM ERROR bits=[0, 1, 0, 1, 0, 0, 0, 1, 1, 1]
-(25737872, 'CHKSUM ERROR: ', 0, 'bits: ', [0, 1, 1, 1, 1, 1, 1, 1, 1, 1])
-iso7816-1: CHKSUM ERROR bits=[0, 1, 1, 1, 1, 1, 1, 1, 1, 1]
-(25760574, 'CHKSUM ERROR: ', 0, 'bits: ', [0, 1, 1, 0, 0, 0, 0, 1, 1, 1])
-iso7816-1: CHKSUM ERROR bits=[0, 1, 1, 0, 0, 0, 0, 1, 1, 1]
-(25771792, 'CHKSUM ERROR: ', 0, 'bits: ', [0, 1, 1, 1, 0, 0, 0, 0, 1, 1])
-iso7816-1: CHKSUM ERROR bits=[0, 1, 1, 1, 0, 0, 0, 0, 1, 1]
-(25805306, 'CHKSUM ERROR: ', 0, 'bits: ', [0, 1, 1, 1, 1, 1, 1, 1, 1, 1])
-iso7816-1: CHKSUM ERROR bits=[0, 1, 1, 1, 1, 1, 1, 1, 1, 1]
+('Invalid TS byte 0xff (pre-activation?), resyncing',)
+iso7816-1: Invalid TS byte 0xff - skipped
 
 === sunrise_phone_sample ATR-included ===
 ('iso7816 decoder v1.0.0',)
@@ -321,6 +331,6 @@ test_build_packet_plain_res_zero (__main__.TestGsmtapFlags.test_build_packet_pla
 test_flag_constant_value (__main__.TestGsmtapFlags.test_flag_constant_value) ... ok
 
 ----------------------------------------------------------------------
-Ran 12 tests in 0.005s
+Ran 12 tests in 0.006s
 
 OK
