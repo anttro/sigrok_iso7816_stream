@@ -124,6 +124,25 @@ def plausible_cla(cla):
     return cla in (0x00, 0x04, 0x08, 0x80, 0x84, 0xA0, 0xB0)
 
 
+def plausible_ins(ins):
+    '''Check if INS byte is a structurally valid T=0 instruction.
+
+    Per ISO 7816-4 §12.1.1 / TS 102 221:
+      - 0x00 is reserved/invalid.
+      - MSB nibble 0x6/0x9 collides with status words.
+      - LSB must be 0 (standard interindustry commands).
+
+    Used together with plausible_cla() to distinguish a real command header
+    from noise while hunting for an ATR.'''
+    if ins == 0x00:
+        return False
+    if (ins & 0xF0) == 0x60 or (ins & 0xF0) == 0x90:
+        return False
+    if (ins & 0x01) != 0:
+        return False
+    return True
+
+
 def is_desynced(packet):
     '''Classify an emitted T=0 packet as mis-framed.
 
@@ -251,6 +270,10 @@ class Decoder(srd.Decoder):
     def reset(self):
         self.peeked_byte = None
         self.peeked_samplenum = -1
+        # Replay buffer for bytes read ahead but not consumed (used by the
+        # command-detect path in the ATR hunt to hand a command header back
+        # to the DATA state without dropping it).
+        self._replay = deque()
         self.wrote_pcap_header = False
         self.samplerate = None
         self.sample_as_clock = False
@@ -270,6 +293,12 @@ class Decoder(srd.Decoder):
         self._etu_fail_count = 0
         self._edge_spacings = deque(maxlen=128)
         self._samples_per_clock = None
+        # True when clock_skip is known to be correct: after a parsed ATR
+        # (372 default), an accepted PPS (FI/DI), or a successful ETU-based
+        # recovery on a mid-session capture.  The CLK-sync reader is only
+        # trusted when this is set; otherwise the edge-list reader (which
+        # uses bit_samples) is the safe fallback.
+        self._clock_skip_confident = False
         self._start_fall = None
         self._edge_read = True
         self._last_sn = -1
@@ -342,6 +371,11 @@ class Decoder(srd.Decoder):
         else:
             self.state = 'DATA'
         self._atr_parsed = False
+        # For an ATR-included capture the ATR is sent at the default 372 CLK
+        # cycles/bit, so clock_skip=372 is known-correct from the start.  For
+        # a mid-session capture we do not know whether the card already PPS'd
+        # to a faster ETU, so clock_skip is not trusted until recovered.
+        self._clock_skip_confident = self.starts_with_atr
         if (self.options['protocol'] == "T=0"):
             self.hasT0 = True
             self.hasT1 = False
@@ -478,11 +512,17 @@ class Decoder(srd.Decoder):
                 self.log(text)
                 fired = True
                 if (emit_lvl == 0):
-                    # RST asserted (LOW): card entering reset state.
-                    # Prepare for the next ATR by re-arming the hunt and
-                    # clearing _atr_parsed so the next RST deassert will
-                    # also re-arm (needed for the first cycle at startup).
+                    # RST asserted (LOW): card entering reset state.  A reset
+                    # makes the card send its ATR at the DEFAULT ETU (372 CLK
+                    # cycles/bit), so clock_skip must be restored to 372 --
+                    # otherwise a post-PPS clock_skip (e.g. 16) would make the
+                    # decoder hunt for the fresh ATR at the wrong rate and
+                    # mis-frame every byte.  Prepare for the next ATR by
+                    # re-arming the hunt and clearing _atr_parsed so the next
+                    # RST deassert will also re-arm (first cycle at startup).
                     self._atr_parsed = False
+                    self.clock_skip = 372
+                    self.bit_samples = None
                     self.state = 'FIND START'
                     self._atr_hunt_count = 0
                 if (emit_lvl == 1):
@@ -617,6 +657,28 @@ class Decoder(srd.Decoder):
         if self._samples_per_clock is not None:
             return int(self.clock_skip * self._samples_per_clock)
         return int(self.clock_skip * 3)
+
+    def _derive_clock_skip_from_etu(self):
+        '''Derive clock_skip (CLK edges per ETU) from the recovered ETU.
+
+        For a mid-session capture (no ATR) the card may already be PPS'd to a
+        fast ETU, so the default clock_skip=372 is wrong.  Once _measure_etu
+        has recovered bit_samples (samples per ETU) and _measure_clock_period
+        has recovered _samples_per_clock (samples per CLK cycle), clock_skip
+        = bit_samples / _samples_per_clock.  Sets _clock_skip_confident on
+        success so the CLK-sync reader is used; leaves it clear (edge-list
+        fallback) if the CLK period could not be measured.'''
+        if self._samples_per_clock and self.bit_samples:
+            cs = int(round(float(self.bit_samples) / float(self._samples_per_clock)))
+            if cs >= 1:
+                if cs != self.clock_skip:
+                    self.log("clock_skip recovered from ETU:", cs,
+                             "(bit_samples", self.bit_samples,
+                             "/ spc", self._samples_per_clock, ")")
+                self.clock_skip = cs
+                self._clock_skip_confident = True
+                return True
+        return False
 
     def _measure_etu(self):
         '''Recover the live bit period (ETU, in samples) from the DATA line for
@@ -773,6 +835,102 @@ class Decoder(srd.Decoder):
                 return s
         return None
 
+    def _wait_clk_rising(self, n):
+        '''Wait for n CLK rising edges.  Returns False on end-of-capture.
+
+        CLK runs continuously for the whole of a character (Clock Stop only
+        happens between characters), so within a byte it is safe to skip most
+        of the way by samples and then land on the exact rising edge.  This
+        keeps the edge-exactness of CLK-edge timing without paying one wait()
+        per CLK cycle.  Lands within +/-1 CLK cycle of the target edge, which
+        is far inside the stable region of a bit (a bit is held for the whole
+        ETU).'''
+        if n <= 0:
+            return True
+        if self._samples_per_clock and n > 2:
+            # Skip (n - 2) cycles by samples, then take the last 2 edges
+            # exactly.  Undershooting by a cycle is harmless (the bit is
+            # stable for the full ETU), and the final two edge waits re-align
+            # us to a genuine CLK edge.
+            skip = int((n - 2) * self._samples_per_clock)
+            if skip > 0:
+                self.wait({'skip': skip})
+            n = 2
+        for _ in range(n):
+            pins = self.wait({self.CLK_IDX: 'r'})
+            if pins is None:
+                self._eof = True
+                return False
+        return True
+
+    def _read_byte_clk(self):
+        '''Decode a single byte using CLK-edge counting for bit timing.
+
+        Counts clock_skip CLK rising edges per ETU and samples DATA at the bit
+        centers (1.5, 2.5, ..., 9.5 ETU from the start-bit fall).  Because the
+        bit value is held stable for the whole ETU, sampling near the centre
+        is exact for ANY byte -- including 0x00 / 0xff, which have too few DATA
+        transitions for the edge-list reader to anchor reliably.
+
+        Safe across Clock Stop Mode: CLK is never stopped mid-character, and
+        it always resumes a few cycles before the next start bit (the guard
+        time), so once wait_data_falling() has found a start bit, CLK is
+        running for the whole frame.  clock_skip is protocol-defined (372 for
+        the ATR, FI/DI after PPS), so no runtime ETU measurement is needed on
+        the native path -- this is what makes decoding deterministic.'''
+        if self._start_fall is None:
+            self.wait_data_falling()
+            if self._eof:
+                return 0x00
+        e0 = self._start_fall
+        self._start_fall = None
+        self.ss = e0
+        bs = self.clock_skip
+        self.bits = [0]  # start bit (always low)
+        prev_edges = 0
+        for i in range(9):
+            # bit centres at (1.5 + i) ETU from the start fall
+            total = int(round((1.5 + i) * bs))
+            if not self._wait_clk_rising(total - prev_edges):
+                # End of capture mid-byte: pad so the frame stays 10 bits.
+                while len(self.bits) < 10:
+                    self.bits.append(self.bits[-1] if self.bits else 1)
+                break
+            prev_edges = total
+            pins = self.wait({'skip': 0})
+            if pins is None:
+                self._eof = True
+                while len(self.bits) < 10:
+                    self.bits.append(self.bits[-1] if self.bits else 1)
+                break
+            self.bits.append(pins[self.DATA_IDX])
+        self.es = self.samplenum
+        self.signal_quality(1 if (self.bits.count(1) % 2 != 0) else 0)
+        parity_ok = (self.bits.count(1) % 2 == 0)
+        if (self.bits.count(1) % 2 != 0):
+            self.log(self.samplenum, "CHKSUM ERROR: ", 0, "bits: ", self.bits)
+            self.put(self.ss, self.samplenum, self.out_ann,
+                     [0, ["CHKSUM ERROR bits={bits}".format(bits=self.bits)]])
+        if self.bit_samples is not None:
+            self._confirm_etu(parity_ok)
+        byte = self.get_bytes(self.bits[1:9])
+        # Stuck-line watchdog (same as the other readers).
+        if (sum(self.bits) == 0):
+            self.zero_run += 1
+            if (self.zero_run == 32):
+                self.log("I/O line reads all-zero for", self.zero_run,
+                         "frames - stuck low? check pogo contact")
+                try:
+                    self.put(self.ss, self.samplenum, self.out_ann,
+                             [Ann.ANN_WARN, ["I/O stuck low?"]])
+                except Exception:
+                    pass
+        else:
+            self.zero_run = 0
+        self.log(self.samplenum, self.bits[1:9], " : ", "0x{:02x}".format(byte))
+        self.put(self.ss, self.samplenum, self.out_ann, [1, [hex(byte)]])
+        return byte
+
     def _read_byte_edges(self, bs):
         '''Decode a single byte from the DATA line using edge-list
         reconstruction (robust to Clock Stop Mode / gated CLK, where fixed
@@ -922,6 +1080,8 @@ class Decoder(srd.Decoder):
         return self._stall > 4
 
     def read_byte(self):
+        if self._replay:
+            return self._replay.popleft()
         if (self.peeked_byte != None):
             byte = self.peeked_byte
             self.peeked_byte = None
@@ -935,6 +1095,8 @@ class Decoder(srd.Decoder):
         return self.read_byte_no_wait()
 
     def peek_byte(self):
+        if self._replay:
+            return self._replay[0]
         if (self.peeked_byte != None):
             return self.peeked_byte
         if not (self._edge_read and self._start_fall is not None):
@@ -981,11 +1143,30 @@ class Decoder(srd.Decoder):
             self.log(self.samplenum, self.bits[1:9], " : ", "0x{:02x}".format(byte))
             self.put(self.ss, self.samplenum, self.out_ann, [1, [hex(byte)]])
             return byte
-        # Normal path.  The edge-list reader is used for all captures: it
-        # re-anchors on each start bit and is immune to Clock Stop Mode and
-        # sample-skip drift.  Callers (read_byte / peek_byte / read_first_byte)
-        # ensure _start_fall is set before calling here.
+        # Normal path.  Two bit readers are available:
+        #  - CLK-synchronous (_read_byte_clk): exact CLK-edge timing, used in
+        #    native mode where a real CLK channel is present.  Handles 0x00 /
+        #    0xff perfectly and is deterministic.
+        #  - Edge-list (_read_byte_edges): DATA-edge reconstruction, used for
+        #    the non-native clock modes (sample_as_clock / detect) and as a
+        #    fallback when clock_skip has not been established yet.
+        #  Callers (read_byte / peek_byte / read_first_byte) ensure
+        #  _start_fall is set before calling here.
+        if self._use_clk_sync():
+            return self._read_byte_clk()
         return self._read_byte_edges(self.bit_samples or self._compute_bit_samples())
+
+    def _use_clk_sync(self):
+        '''True when the CLK-synchronous reader should be used.
+
+        Only in native clock mode (a real CLK channel) AND only when
+        clock_skip is known to be correct (_clock_skip_confident).  In
+        sample_as_clock / detect modes there is no usable CLK signal, and on
+        a mid-session capture clock_skip is unknown until recovered -- in
+        both cases the edge-list DATA reader (driven by bit_samples) is the
+        safe fallback.'''
+        return (not (self.sample_as_clock or self.detect_clock)
+                and self._clock_skip_confident)
 
 
     def resync_idle(self):
@@ -1025,6 +1206,11 @@ class Decoder(srd.Decoder):
         # first ATR byte.  This removes the hard-coded clock_skip*3 estimate.
         if self._samples_per_clock is None:
             self._measure_clock_period()
+        # Ensure the sample-domain ETU is available for framing
+        # (wait_data_falling / resync_idle) even though the CLK-sync reader
+        # itself only needs clock_skip.
+        if self.bit_samples is None:
+            self.bit_samples = self._compute_bit_samples()
 
         if (self.peeked_byte != None):
             atr_start = self.peeked_samplenum
@@ -1039,6 +1225,22 @@ class Decoder(srd.Decoder):
         # ATR and permanently desyncing the session.
         ts_attempts = 0
         while (byte not in (0x3b, 0x3f) and ts_attempts < 64):
+            # Command-detect: a plausible CLA immediately followed by a
+            # plausible INS is the start of a command, not an ATR.  Hand the
+            # header back to the DATA state for normal T=0 framing instead of
+            # silently skipping it as an "invalid TS" byte (this is how a
+            # SELECT was being lost while the decoder hunted for an ATR that
+            # was not coming).  The full 5-byte header is still validated in
+            # the DATA state; ambiguous frames are emitted flagged, not dropped.
+            if plausible_cla(byte):
+                nxt = self.peek_byte()
+                if plausible_ins(nxt):
+                    self._replay.appendleft(byte)
+                    self.hasT0 = True
+                    self.hasT1 = False
+                    self.state = 'DATA'
+                    self.log("Command header 0x{cla:02x} 0x{ins:02x} during ATR hunt; decoding as command".format(cla=byte, ins=nxt))
+                    return
             self.log("Invalid TS byte 0x{byte:02x} (pre-activation?), resyncing".format(byte=byte))
             self.put(atr_start, self.samplenum, self.out_ann,
                      [Ann.ANN_WARN, ["Invalid TS byte 0x{byte:02x} - skipped".format(byte=byte)]])
@@ -1047,10 +1249,13 @@ class Decoder(srd.Decoder):
             ts_attempts += 1
         if (byte not in (0x3b, 0x3f)):
             self._atr_hunt_count += 1
+            # No valid ATR found this round -- go back to hunting for the
+            # next falling edge.  Never fabricate a synthetic ATR: a stray
+            # 0x3B/0x3F byte inside command traffic (e.g. the FID '3F00' of a
+            # SELECT) would otherwise be mis-committed as a fake 2-byte ATR
+            # and destroy the surrounding command.  The hunt is bounded by
+            # _atr_hunt_count only to avoid logging forever on a dead line.
             if (self._atr_hunt_count < 8):
-                # No valid ATR found this round -- go back to hunting for
-                # the next falling edge (the real ATR may follow a burst of
-                # pre-activation traffic) instead of emitting a bogus ATR.
                 self.log("No valid TS byte, back to FIND START (hunt {count})".format(count=self._atr_hunt_count))
                 self.state = 'FIND START'
                 return
@@ -1059,16 +1264,11 @@ class Decoder(srd.Decoder):
                 self._atr_hunt_count = 0
                 self.state = 'FIND START'
                 return
-            self.log("Invalid TS byte 0x{byte:02x}, mid-session: committing synthetic T=0 ATR".format(byte=byte))
-            self.put(atr_start, self.samplenum, self.out_ann,
-                     [Ann.ANN_WARN, ["mid-session: synthetic T=0 ATR"]])
-            self.ATR = [0x3B, 0x00]
+            # Give up hunting for an ATR here without emitting anything;
+            # resume T=0 framing from the next byte instead of inventing one.
+            self.log("No valid ATR after {count} hunts; resuming DATA without synthetic ATR".format(count=self._atr_hunt_count))
             self.hasT0 = True
             self.hasT1 = False
-            self.put(atr_start, self.samplenum, self.out_ann, [2, ["ATR", "ATR={atr}".format(atr=codecs.encode(bytes(self.ATR), 'hex'))]])
-            self.put(atr_start, self.samplenum, self.out_python, [0, self.ATR])
-            self.emit_packet(GSMTAP_SIM_ATR, bytes(self.ATR), atr_start, self.samplenum)
-            self.log("ENDATR", codecs.encode(bytes(self.ATR), 'hex'))
             self.state = 'DATA'
             self._resync = True
             if (self.options['protocol'] == "T=0"):
@@ -1158,6 +1358,9 @@ class Decoder(srd.Decoder):
 
         self.log("ENDATR", codecs.encode(bytes(self.ATR), 'hex'))
         self._atr_parsed = True
+        # A real ATR was parsed at the default rate, so clock_skip=372 is now
+        # confirmed correct -- the CLK-sync reader is trusted from here on.
+        self._clock_skip_confident = True
         self.state = 'DATA'
         self._resync = True  # Wait for inter-frame idle gap before reading commands
 
@@ -1326,15 +1529,45 @@ class Decoder(srd.Decoder):
                 self.di = self.baud_rate.get(int(pps1 & 0x0F), 1)
                 self.clock_skip = max(int(self.fi // self.di), 1)
                 self.log("PPS accepted: FI", self.fi, "DI", self.di, "clock_skip", self.clock_skip)
-            # PPS changed the bit rate — force ETU re-measurement from the
-            # live DATA line so the decoder reads subsequent bytes at the
-            # correct speed.  _measure_etu() will set _edge_read=True and
-            # lock the new ETU; the first byte after PPS is consumed by
-            # the measurement (acceptable: it would be garbage at the old
-            # speed anyway).
-            self._pps_speed_changed = True
-            self.bit_samples = None
-            self._start_fall = None
+            # PPS changed the bit rate.  How we follow it depends on the reader:
+            #
+            #  - Native CLK-sync reader (_use_clk_sync): clock_skip is the ONLY
+            #    timing input -- the CLK period is unchanged by PPS, so the new
+            #    ETU is exactly clock_skip * samples_per_clock.  No DATA
+            #    re-measurement is needed (and none should happen: consuming a
+            #    burst here would silently drop the first post-PPS command).
+            #    Just refresh bit_samples for wait_data_falling / edge fallback.
+            #
+            #  - Edge-list reader (non-native modes): there is no usable CLK
+            #    reference, so re-measure the ETU from the live DATA line on
+            #    the next decode cycle; that burst is emitted flagged, not
+            #    silently consumed.
+            # PPS changed the bit rate.  How we follow it depends on the mode:
+            #
+            #  - Native CLK mode (real CLK channel): after an ACCEPTED PPS the
+            #    card and terminal switch to FI/DI CLK cycles per bit, and the
+            #    CLK period itself is unchanged.  So clock_skip = FI/DI is
+            #    exact -- no DATA re-measurement is needed (and none should
+            #    happen: consuming a burst here would silently drop the first
+            #    post-PPS command).  Just refresh bit_samples for
+            #    wait_data_falling / the edge-list fallback.
+            #
+            #  - sample_as_clock / detect modes: there is no usable CLK
+            #    reference, so re-measure the ETU from the live DATA line on
+            #    the next decode cycle; that burst is emitted flagged, not
+            #    silently consumed.
+            if not (self.sample_as_clock or self.detect_clock):
+                self.bit_samples = self._compute_bit_samples()
+                self._pps_speed_changed = False
+                # Re-hunt for the next start bit after the PPS response.
+                self._start_fall = None
+            else:
+                self._pps_speed_changed = True
+                self.bit_samples = None
+                self._start_fall = None
+            # clock_skip now reflects the negotiated FI/DI, so it is known to
+            # be correct regardless of which reader is active.
+            self._clock_skip_confident = True
         else:
             self.log("INVALID PPS. Request & Response not matching.", hex(r_lrc))       
             self.put(ss, self.samplenum, self.out_ann, [0, ["INVALID PPS. Request & Response not matching"]])
@@ -1377,9 +1610,19 @@ class Decoder(srd.Decoder):
             # from the live DATA line.
             if self.bit_samples is None and (self.starts_with_atr is False or self._pps_speed_changed):
                 self._pps_speed_changed = False
+                # For the CLK-sync reader we also need clock_skip, which is
+                # unknown on a mid-session capture.  Measure the CLK period
+                # (samples per CLK cycle) and the ETU (samples per bit), then
+                # derive clock_skip = ETU / CLK-period so the CLK-sync reader
+                # runs at the true rate.  If the CLK period cannot be measured
+                # (fully gated CLK), clock_skip stays unconfident and the
+                # edge-list reader (bit_samples-driven) is used instead.
+                if self._samples_per_clock is None:
+                    self._measure_clock_period()
                 self._measure_etu()
                 if self._eof:
                     return False
+                self._derive_clock_skip_from_etu()
                 return True
                 # ETU now known: run the standard framing below.
 
