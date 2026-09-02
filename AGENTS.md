@@ -218,7 +218,44 @@ The `native_fast` sample-skip, signal degradation, clock monitor, and
 fatal TCK check were all discarded.  The decoder is now the original
 `2055d1c` code plus 24 lines of mid-session support.
 
-## Mid-session phone decode (current state)
+## Current architecture (v1.0.0, post-refactor)
+
+The decoder now uses a **single edge-based bit reader** for all captures and
+computes the ETU from the **actual measured CLK period** instead of the
+hard-coded `clock_skip * 3` approximation.
+
+### Key changes
+
+1. **Edge-list bit reader everywhere.** `_read_byte_edges()` is the only
+   reader.  It collects DATA edges around the start bit, reconstructs the 10
+   bits from their actual positions, and re-anchors on the next start bit.
+   Immune to Clock Stop Mode and sample-skip drift.
+
+2. **CLK-based ETU.** In native CLK mode, `_measure_clock_period()` measures
+   the actual CLK period in samples from multiple rising edges.  The ETU is
+   `clock_skip * samples_per_clock`.  This replaces the `clock_skip * 3`
+   estimate that was ~10 % off on many captures.
+
+3. **Mid-session ETU recovery.** `_measure_etu()` still recovers the ETU
+   from the first live DATA burst when no ATR is present.  After PPS,
+   `bit_samples` is reset so the new ETU is re-locked.
+
+4. **Post-ATR resync.** After ENDATR, `_resync = True` forces an idle-gap
+   wait before the first command is read, preventing ATR data from being
+   mis-framed as APDUs.
+
+5. **PPS speed change.** After accepted PPS, `clock_skip` is updated to the
+   new FI/DI value.  The next decode cycle re-measures the ETU from the live
+   line (or recomputes it from the CLK period) so post-PPS commands are
+   decoded at the correct speed.
+
+### Testing
+
+- `test_8` / `test_7`: 0 garbage in both ATR-included and mid-session modes.
+- All other traces: no regressions (smoke test).
+- Unit tests: 12/12 pass.
+
+## Mid-session phone decode (legacy note, still applies)
 
 For a live mid-session phone capture (`starts_with_atr=false`,
 `protocol=T=0`), the decoder now:
@@ -226,9 +263,8 @@ For a live mid-session phone capture (`starts_with_atr=false`,
 - Recovers the ETU from the live DATA line via `_measure_etu()` (edge-list,
   locked once) so a gated/stopped CLK at a fast ETU (e.g. ~53 samples) is
   decoded instead of mis-read at the 372-clock default.
-- Decodes bytes with the edge-list reader `_read_byte_edges` when `_edge_read`
-  is set (only after `_measure_etu`), which is drift-immune.  ATR-based
-  captures keep the original sample-skip reader.
+- Decodes bytes with the edge-list reader `_read_byte_edges` (the only
+  reader now), which is drift-immune.
 - Runs the normal T=0 framing so each command+response exchange is emitted as
   one APDU.
 
