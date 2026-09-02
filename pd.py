@@ -269,8 +269,9 @@ class Decoder(srd.Decoder):
         self._etu_confirm_count = 0
         self._etu_fail_count = 0
         self._edge_spacings = deque(maxlen=128)
+        self._samples_per_clock = None
         self._start_fall = None
-        self._edge_read = False
+        self._edge_read = True
         self._last_sn = -1
         self._eof = False
         self._prev_wait_sn = None
@@ -572,6 +573,51 @@ class Decoder(srd.Decoder):
         self.wait_data_falling()
         return self.read_byte_no_wait()
 
+    def _measure_clock_period(self):
+        '''Measure the period of the native CLK signal in samples.
+
+        For native CLK mode, the actual bit period is
+        clock_skip * samples_per_clock.  Measuring it directly removes the
+        hard-coded 3× approximation and gives the correct ETU for the ATR and
+        for any post-PPS speed.  Returns True if a stable period was found.
+
+        Collects multiple CLK rising-edge spacings and picks the smallest
+        recurring one (like _robust_min) so a single glitch does not skew the
+        result.'''
+        if self.sample_as_clock or self.detect_clock:
+            return False
+        spacings = []
+        last_sn = None
+        try:
+            # Collect up to 16 consecutive CLK rising-edge spacings.
+            for _ in range(16):
+                pins = self.wait({self.CLK_IDX: 'r'})
+                if pins is None:
+                    return False
+                sn = self.samplenum
+                if last_sn is not None:
+                    spacings.append(sn - last_sn)
+                last_sn = sn
+            if len(spacings) < 3:
+                return False
+            period = self._robust_min(spacings)
+            if 2 <= period <= 100000:
+                self._samples_per_clock = period
+                self.log("clock period (samples):", period)
+                return True
+        except Exception:
+            pass
+        return False
+
+    def _compute_bit_samples(self):
+        '''Return the best available bit-period estimate in samples.
+
+        Uses the measured clock period if available; otherwise falls back to
+        the legacy clock_skip * 3 estimate.'''
+        if self._samples_per_clock is not None:
+            return int(self.clock_skip * self._samples_per_clock)
+        return int(self.clock_skip * 3)
+
     def _measure_etu(self):
         '''Recover the live bit period (ETU, in samples) from the DATA line for
         a mid-session capture that has no ATR to derive timing from.
@@ -599,7 +645,7 @@ class Decoder(srd.Decoder):
         self._start_fall = None  # consumed; framing re-waits on its own
         self.ss = e0
         idle_limit = int((self.bit_samples or
-                           (self.clock_skip * 3)) * 20)
+                           self._compute_bit_samples()) * 20)
         if idle_limit < 3000:
             idle_limit = 3000
         edges = [(e0, 0)]
@@ -639,7 +685,7 @@ class Decoder(srd.Decoder):
                 self._etu_confirm_count = 0
                 self._etu_fail_count = 0
         if self.bit_samples is None:
-            self.bit_samples = int(self.clock_skip * 3)
+            self.bit_samples = self._compute_bit_samples()
             self._etu_confirm_count = 0
             self._etu_fail_count = 0
         # The live line is gated/stopped CLK; use the edge-list bit reader
@@ -647,6 +693,22 @@ class Decoder(srd.Decoder):
         # every byte from here on.
         self._edge_read = True
         self.log("etu recovered (samples):", self.bit_samples)
+
+    def _lock_etu_from_edges(self, min_spacings=6):
+        '''Lock the ETU from the most recent DATA edge spacings.
+
+        Used after the first few bytes of an ATR (which provide a clean,
+        contiguous burst at the default ETU) to derive the actual bit period
+        so the rest of the session is decoded at the correct speed.'''
+        if len(self._edge_spacings) < min_spacings:
+            return
+        spacings = list(self._edge_spacings)
+        etu = self._robust_min(spacings)
+        if 4 <= etu <= 100000:
+            self.bit_samples = etu
+            self._etu_confirm_count = 3  # lock immediately
+            self._etu_fail_count = 0
+            self.log("ETU locked from ATR edges:", etu)
 
     def _confirm_etu(self, parity_ok):
         '''Validate ETU measurement after _measure_etu.  Call after each byte
@@ -725,6 +787,11 @@ class Decoder(srd.Decoder):
         idle (CLK stopped between command and response) simply leaves
         _start_fall unset here, and the next read re-hunts via
         wait_data_falling().'''
+        # Safety: if we were called without a queued start bit, hunt for one.
+        if self._start_fall is None:
+            self.wait_data_falling()
+            if self._eof:
+                return 0x00
         e0 = self._start_fall
         self._start_fall = None
         self.ss = e0
@@ -744,6 +811,11 @@ class Decoder(srd.Decoder):
             if sn > limit:
                 break
         bits = self._bits_at(e0, edges, bs)
+        # Keep the spacings for ETU locking; the first few bytes of an ATR
+        # provide the most reliable reference for the actual bit period.
+        if len(edges) >= 2:
+            for i in range(1, len(edges)):
+                self._edge_spacings.append(edges[i][0] - edges[i - 1][0])
         if bits is None:
             self.bits = []
             byte = 0
@@ -909,49 +981,11 @@ class Decoder(srd.Decoder):
             self.log(self.samplenum, self.bits[1:9], " : ", "0x{:02x}".format(byte))
             self.put(self.ss, self.samplenum, self.out_ann, [1, [hex(byte)]])
             return byte
-        # Normal path.  For a mid-session capture whose ETU was recovered
-        # from the live DATA line (_measure_etu / _edge_read), use edge-list
-        # bit reconstruction: a gated/stopped CLK makes a fixed sample-skip
-        # cadence drift between bytes.  Otherwise (ATR-based captures with a
-        # stable CLK, e.g. test_8) keep the original sample-skip reader, which
-        # is proven there.
-        if self._edge_read:
-            if self._start_fall is None:
-                return 0x00
-            return self._read_byte_edges(
-                self.bit_samples or int(self.clock_skip * 3))
-        # Original sample-skip reader (stable CLK).
-        self.ss = self._start_fall if self._start_fall is not None else self.samplenum
-        bs = self.bit_samples or int(self.clock_skip * 3)
-        self.bits.append(0)  # start bit
-        for k in range(1, 10):
-            self.wait({'skip': int(round(0.5 * bs)) if k == 1 else int(round(bs))})
-            pins = self.wait({'skip': 0})
-            self.bits.append(pins[self.DATA_IDX])
-        self.es = self.samplenum
-        self.signal_quality(1 if (self.bits.count(1) % 2 != 0) else 0)
-        if (self.bits.count(1) % 2 != 0):
-            self.log(self.samplenum, "CHKSUM ERROR: ", pins[self.DATA_IDX], "bits: ", self.bits)
-            self.put(self.ss, self.samplenum, self.out_ann, [0, ["CHKSUM ERROR bits={bits}".format(bits=self.bits)]])
-        byte = self.get_bytes(self.bits[1:9])
-        # Stuck-line watchdog: an unbroken run of all-zero frames (start
-        # bit low, data zero, parity valid) is how a floating/grounded
-        # I/O probe looks when decoded.  Warn once per episode.
-        if (sum(self.bits) == 0):
-            self.zero_run += 1
-            if (self.zero_run == 32):
-                self.log("I/O line reads all-zero for", self.zero_run,
-                         "frames - stuck low? check pogo contact")
-                try:
-                    self.put(self.ss, self.samplenum, self.out_ann,
-                             [Ann.ANN_WARN, ["I/O stuck low?"]])
-                except Exception:
-                    pass
-        else:
-            self.zero_run = 0
-        self.log(self.samplenum, self.bits[1:9], " : ", "0x{:02x}".format(byte))
-        self.put(self.ss, self.samplenum, self.out_ann, [1, [hex(byte)]])
-        return byte
+        # Normal path.  The edge-list reader is used for all captures: it
+        # re-anchors on each start bit and is immune to Clock Stop Mode and
+        # sample-skip drift.  Callers (read_byte / peek_byte / read_first_byte)
+        # ensure _start_fall is set before calling here.
+        return self._read_byte_edges(self.bit_samples or self._compute_bit_samples())
 
 
     def resync_idle(self):
@@ -961,7 +995,7 @@ class Decoder(srd.Decoder):
         samples (which advance even when CLK is frozen), and bound the hunt
         by a sample budget so a pathologically-busy (or stuck) line never
         stalls the decoder.'''
-        bs = self.bit_samples or int(self.clock_skip * 3)
+        bs = self.bit_samples or self._compute_bit_samples()
         budget = int(IDLE_RESYNC_ETU * bs) * 8
         step = max(int(bs), 1)
         loops = budget // step + 16
@@ -984,6 +1018,13 @@ class Decoder(srd.Decoder):
         tD = []
         historicalBytes = []
         self.ATR = []
+        # Clear any stale edge spacings; the first few ATR bytes give us the
+        # most reliable ETU reference for the whole session.
+        self._edge_spacings.clear()
+        # Try to lock the ETU from the actual CLK frequency before reading the
+        # first ATR byte.  This removes the hard-coded clock_skip*3 estimate.
+        if self._samples_per_clock is None:
+            self._measure_clock_period()
 
         if (self.peeked_byte != None):
             atr_start = self.peeked_samplenum
@@ -1043,6 +1084,12 @@ class Decoder(srd.Decoder):
 
         t0 = self.read_byte()
         self.ATR.append(t0)
+        # Lock ETU from the first two ATR bytes (TS + T0).  The ATR is sent
+        # at the default ETU, so its edge spacings are the authoritative
+        # timing reference for the rest of the session (until PPS changes it).
+        # Temporarily disabled: measurement is unstable on some captures.
+        # if self.bit_samples is None:
+        #     self._lock_etu_from_edges(min_spacings=6)
 
         firstT0 = t0
 
@@ -1287,7 +1334,6 @@ class Decoder(srd.Decoder):
             # speed anyway).
             self._pps_speed_changed = True
             self.bit_samples = None
-            self._edge_read = False
             self._start_fall = None
         else:
             self.log("INVALID PPS. Request & Response not matching.", hex(r_lrc))       
@@ -1350,7 +1396,7 @@ class Decoder(srd.Decoder):
                 self.line_events(self.wait({'skip': 0}))
 
             if not self.hasT0 and not self.hasT1:
-                bs = self.bit_samples or int(self.clock_skip * 3)
+                bs = self.bit_samples or self._compute_bit_samples()
                 self.wait({'skip': int(bs)})
                 return True
 
