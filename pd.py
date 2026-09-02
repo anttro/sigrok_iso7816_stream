@@ -1112,6 +1112,7 @@ class Decoder(srd.Decoder):
         self.log("ENDATR", codecs.encode(bytes(self.ATR), 'hex'))
         self._atr_parsed = True
         self.state = 'DATA'
+        self._resync = True  # Wait for inter-frame idle gap before reading commands
 
         if (self.options['protocol'] == "T=0"):
             self.hasT0 = True

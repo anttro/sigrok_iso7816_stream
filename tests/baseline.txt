@@ -1,4 +1,4 @@
-=== Baseline captured 2026-09-02T12:15:58+03:00 ===
+=== Baseline captured 2026-09-02T12:42:04+03:00 ===
 
 === test_8 ATR-included ===
 ('iso7816 decoder v1.0.0',)
@@ -331,6 +331,6 @@ test_build_packet_plain_res_zero (__main__.TestGsmtapFlags.test_build_packet_pla
 test_flag_constant_value (__main__.TestGsmtapFlags.test_flag_constant_value) ... ok
 
 ----------------------------------------------------------------------
-Ran 12 tests in 0.006s
+Ran 12 tests in 0.005s
 
 OK
