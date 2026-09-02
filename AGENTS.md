@@ -218,36 +218,55 @@ The `native_fast` sample-skip, signal degradation, clock monitor, and
 fatal TCK check were all discarded.  The decoder is now the original
 `2055d1c` code plus 24 lines of mid-session support.
 
-## Current architecture (v1.0.0, post-refactor)
+## Current architecture (v1.0.0, CLK-synchronous refactor)
 
-The decoder now uses a **single edge-based bit reader** for all captures and
-computes the ETU from the **actual measured CLK period** instead of the
-hard-coded `clock_skip * 3` approximation.
+The decoder uses a **CLK-synchronous bit reader** for native-CLK captures and
+an edge-list DATA reader for the non-native clock modes.  Bit timing comes
+from **counting real CLK edges**, not from a sample-count estimate.
+
+### Two bit readers (selected per burst)
+
+| Reader | Timing source | Used when |
+|--------|---------------|-----------|
+| `_read_byte_clk()` | count `clock_skip` CLK rising edges per ETU, sample DATA at bit centres | native clock mode **and** `clock_skip` known (`_clock_skip_confident`) |
+| `_read_byte_edges()` | DATA-edge reconstruction from `bit_samples` | `sample_as_clock`/`detect`, or mid-session before `clock_skip` is recovered |
 
 ### Key changes
 
-1. **Edge-list bit reader everywhere.** `_read_byte_edges()` is the only
-   reader.  It collects DATA edges around the start bit, reconstructs the 10
-   bits from their actual positions, and re-anchors on the next start bit.
-   Immune to Clock Stop Mode and sample-skip drift.
+1. **CLK-synchronous reader.** `_read_byte_clk()` counts `clock_skip` CLK
+   rising edges per ETU and samples DATA at the bit centres (1.5 … 9.5 ETU).
+   Exact for `0x00`/`0xff` (too few DATA transitions for the edge reader) and
+   deterministic, because `clock_skip` is protocol-defined (372 for the ATR,
+   FI/DI after PPS).  Safe across Clock Stop: CLK never stops mid-character
+   and resumes before the next start bit.  `_wait_clk_rising()` skips most of
+   each bit by samples then lands on the exact edge, so it is fast.
 
-2. **CLK-based ETU.** In native CLK mode, `_measure_clock_period()` measures
-   the actual CLK period in samples from multiple rising edges.  The ETU is
-   `clock_skip * samples_per_clock`.  This replaces the `clock_skip * 3`
-   estimate that was ~10 % off on many captures.
+2. **No synthetic ATR.** The old `[3B, 00]` fallback fabricated a 2-byte ATR
+   from a stray `0x3B`/`0x3F` byte in command traffic (e.g. the FID `3F00` of
+   a SELECT) and destroyed the command.  The hunt is bounded and never emits
+   a fake ATR.
 
-3. **Mid-session ETU recovery.** `_measure_etu()` still recovers the ETU
-   from the first live DATA burst when no ATR is present.  After PPS,
-   `bit_samples` is reset so the new ETU is re-locked.
+3. **Command detection during ATR hunt.** A plausible CLA + valid INS is
+   replayed to the DATA state and decoded as a command instead of skipped as
+   "invalid TS" — this recovers a SELECT when the preceding ATR was missed.
 
-4. **Post-ATR resync.** After ENDATR, `_resync = True` forces an idle-gap
-   wait before the first command is read, preventing ATR data from being
-   mis-framed as APDUs.
+4. **RST resets `clock_skip` to 372** on RST assert (a reset makes the card
+   send ATR at the default rate).
 
-5. **PPS speed change.** After accepted PPS, `clock_skip` is updated to the
-   new FI/DI value.  The next decode cycle re-measures the ETU from the live
-   line (or recomputes it from the CLK period) so post-PPS commands are
-   decoded at the correct speed.
+5. **PPS on the native path** just updates `clock_skip` from FI/DI (CLK
+   period is unchanged, so the new ETU is exact).  No DATA re-measurement
+   burst is consumed — previously that silently dropped the first post-PPS
+   command.
+
+6. **Mid-session `clock_skip` recovery.** `_measure_etu()` recovers
+   `bit_samples`; `_measure_clock_period()` recovers `_samples_per_clock`;
+   `_derive_clock_skip_from_etu()` sets `clock_skip = bit_samples /
+   _samples_per_clock` and marks it confident.  If the CLK period cannot be
+   measured (fully gated CLK), the edge-list reader is used instead.
+
+7. **Data handling.** Valid APDUs are emitted clean; ambiguous frames are
+   emitted flagged `GSMTAP_FLAG_BAD_FCS` (never silently dropped); genuine
+   idle-low all-zero noise remains suppressed.
 
 ### Testing
 
