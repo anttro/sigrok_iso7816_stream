@@ -28,7 +28,7 @@ from .gsmtap_stream import (GsmtapStreamSender,
     GSMTAP_SIM_RST_EVENT, GSMTAP_SIM_VCC_EVENT,
     GSMTAP_FLAG_BAD_FCS)
 
-VERSION = '1.0.0'
+VERSION = '1.1.0'
 
 
 
@@ -1232,7 +1232,13 @@ class Decoder(srd.Decoder):
             # SELECT was being lost while the decoder hunted for an ATR that
             # was not coming).  The full 5-byte header is still validated in
             # the DATA state; ambiguous frames are emitted flagged, not dropped.
-            if plausible_cla(byte):
+            #
+            # CLA=0x00 is excluded: it's technically valid for interindustry
+            # commands, but during ATR hunt it's overwhelmingly noise (the
+            # real SELECT that was lost used CLA=0x00 and appeared *after* the
+            # ATR, not during the hunt).  Including it causes false positives
+            # on noise like the 0x00 0x1E seen in the live test.
+            if plausible_cla(byte) and byte != 0x00:
                 nxt = self.peek_byte()
                 if plausible_ins(nxt):
                     self._replay.appendleft(byte)
@@ -1725,24 +1731,20 @@ class Decoder(srd.Decoder):
                     #     then the card's procedure byte (ACK/SW/9x).
                     pb0 = self.read_byte()
                     if (pb0 == bIns or pb0 == (bIns ^ 0xFF)):
-                        # ACK (full match or ~INS): case 2/4 (response data follows).
-                        if (p3 > 0):
-                            for _ in range(p3):
+                        # ACK (full match or ~INS): case 2/4 (response data
+                        # follows).  Read the full response until the status
+                        # word.  The old code read exactly P3 bytes then
+                        # assumed the next two were SW, but if the card sends
+                        # fewer than P3 bytes the decoder would eat the next
+                        # command's header as "response data", concatenating
+                        # multiple exchanges into one blob.
+                        for _ in range(512):
+                            b = self.read_byte()
+                            packet.append(b)
+                            if ((b & 0xF0) == 0x60 or (b & 0xF0) == 0x90):
                                 packet.append(self.read_byte())
-                            pb = self.read_byte()
-                            packet.append(pb)
-                            packet.append(self.read_byte())
-                            got_sw = True
-                        else:
-                            # Le == 0 (GET RESPONSE): read the full response
-                            # until the status word.
-                            for _ in range(512):
-                                b = self.read_byte()
-                                packet.append(b)
-                                if ((b & 0xF0) == 0x60 or (b & 0xF0) == 0x90):
-                                    packet.append(self.read_byte())
-                                    got_sw = True
-                                    break
+                                got_sw = True
+                                break
                     else:
                         # Case 2/3/4: determine data direction from P3 and
                         # the first post-header byte.

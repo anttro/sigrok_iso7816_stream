@@ -117,7 +117,7 @@ ground-truth reader log).
 
 ### Versioning
 
-The decoder version is defined in `pd.py` as `VERSION = '1.0.0'`.
+The decoder version is defined in `pd.py` as `VERSION = '1.1.0'`.
 The version is printed to the log on decoder startup.
 
 ### Testing after decoder changes
