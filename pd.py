@@ -375,6 +375,9 @@ class Decoder(srd.Decoder):
         else:
             self.state = 'DATA'
         self._atr_parsed = False
+        # Inverse convention (TS=0x3F): logic 1 = LOW, logic 0 = HIGH.
+        # Set when TS=0x3F is detected; all subsequent byte reads invert bits.
+        self._inverse_convention = False
         # For an ATR-included capture the ATR is sent at the default 372 CLK
         # cycles/bit, so clock_skip=372 is known-correct from the start.  For
         # a mid-session capture we do not know whether the card already PPS'd
@@ -525,6 +528,7 @@ class Decoder(srd.Decoder):
                     # re-arming the hunt and clearing _atr_parsed so the next
                     # RST deassert will also re-arm (first cycle at startup).
                     self._atr_parsed = False
+                    self._inverse_convention = False
                     self.clock_skip = 372
                     self.bit_samples = None
                     self.state = 'FIND START'
@@ -831,6 +835,9 @@ class Decoder(srd.Decoder):
                     val = v
                 else:
                     break
+            # Inverse convention (TS=0x3F): logic 1 = LOW, logic 0 = HIGH.
+            if self._inverse_convention:
+                val = 1 - val
             bits.append(val)
         return bits
 
@@ -909,7 +916,11 @@ class Decoder(srd.Decoder):
                 while len(self.bits) < 10:
                     self.bits.append(self.bits[-1] if self.bits else 1)
                 break
-            self.bits.append(pins[self.DATA_IDX])
+            bit = pins[self.DATA_IDX]
+            # Inverse convention (TS=0x3F): logic 1 = LOW, logic 0 = HIGH.
+            if self._inverse_convention:
+                bit = 1 - bit
+            self.bits.append(bit)
         self.es = self.samplenum
         self.signal_quality(1 if (self.bits.count(1) % 2 != 0) else 0)
         parity_ok = (self.bits.count(1) % 2 == 0)
@@ -1036,8 +1047,16 @@ class Decoder(srd.Decoder):
             else:
                 min_high = max(int(1.5 * self.bit_samples), 4)
         while True:
-            # Wait for DATA high (idle), servicing RST/VCC.
-            cond = [{self.DATA_IDX: 'h'}]
+            # Wait for DATA idle, servicing RST/VCC.
+            # In direct convention: idle = HIGH, start bit = falling edge (HIGH→LOW).
+            # In inverse convention: idle = LOW, start bit = rising edge (LOW→HIGH).
+            if self._inverse_convention:
+                idle_cond = {self.DATA_IDX: 'l'}  # Wait for LOW (idle in inverse)
+                start_edge = 'r'  # Rising edge = start bit in inverse
+            else:
+                idle_cond = {self.DATA_IDX: 'h'}  # Wait for HIGH (idle in direct)
+                start_edge = 'f'  # Falling edge = start bit in direct
+            cond = [idle_cond]
             if (self.track_rst):
                 cond.append({self.RST_IDX: 'e'})
             if (self.track_vcc):
@@ -1051,9 +1070,9 @@ class Decoder(srd.Decoder):
                     continue
                 break
             hi_start = self.samplenum
-            # Wait for the falling edge; re-anchor the high-start across
+            # Wait for the start-bit edge; re-anchor the high-start across
             # any line events so the measured guard stays accurate.
-            cond2 = [{self.DATA_IDX: 'f'}]
+            cond2 = [{self.DATA_IDX: start_edge}]
             if (self.track_rst):
                 cond2.append({self.RST_IDX: 'e'})
             if (self.track_vcc):
@@ -1126,7 +1145,11 @@ class Decoder(srd.Decoder):
             self.bits.append(0)
             for x in range(9):
                 pins = self.wait({'skip': 0})
-                self.bits.append(pins[1])
+                bit = pins[1]
+                # Inverse convention (TS=0x3F): logic 1 = LOW, logic 0 = HIGH.
+                if self._inverse_convention:
+                    bit = 1 - bit
+                self.bits.append(bit)
                 self.wait({'skip': self.clock_skip - 4})
             self.es = self.samplenum
             self.signal_quality(1 if (self.bits.count(1) % 2 != 0) else 0)
@@ -1176,7 +1199,7 @@ class Decoder(srd.Decoder):
 
 
     def resync_idle(self):
-        '''Re-align framing after a desync: wait for DATA to go HIGH (idle)
+        '''Re-align framing after a desync: wait for DATA to go to idle level
         so the next peek lands on a genuine start bit of a fresh exchange
         instead of a mid-burst byte.  Gating-immune: we poll DATA in
         samples (which advance even when CLK is frozen), and bound the hunt
@@ -1186,9 +1209,12 @@ class Decoder(srd.Decoder):
         budget = int(IDLE_RESYNC_ETU * bs) * 8
         step = max(int(bs), 1)
         loops = budget // step + 16
+        # In direct convention: idle = HIGH (mark).
+        # In inverse convention: idle = LOW (mark is inverted).
+        idle_level = 0 if self._inverse_convention else 1
         for _ in range(loops):
             pins = self.wait({'skip': 0})
-            if pins[self.DATA_IDX] == 1:
+            if pins[self.DATA_IDX] == idle_level:
                 return
         # Could not find an idle gap -- resume normal decode anyway.
 
@@ -1293,6 +1319,11 @@ class Decoder(srd.Decoder):
         else:
             self._atr_hunt_count = 0
         self.ATR.append(byte)
+        # TS=0x3F means inverse convention: logic 1 = LOW, logic 0 = HIGH.
+        # All subsequent byte reads must invert bits.
+        self._inverse_convention = (byte == 0x3f)
+        self.log("TS=0x{ts:02x} ({conv} convention)".format(
+            ts=byte, conv="inverse" if self._inverse_convention else "direct"))
 
         t0 = self.read_byte()
         self.ATR.append(t0)
@@ -1378,6 +1409,18 @@ class Decoder(srd.Decoder):
         # averaging; reset to 372 so PPS (also at the default rate) is
         # read at the correct bit boundary.
         self.clock_skip = 372
+        # Also lock bit_samples so the mid-session re-measure (line 1633)
+        # does not re-run and overwrite clock_skip=372 with a wrong value
+        # derived from pre-ATR edge spacings.  _confirm_etu() may have
+        # cleared bit_samples during ATR hunt (parity failures on noise),
+        # which would trigger _measure_etu() on the next decode_step.
+        self.bit_samples = self.clock_skip * (self._samples_per_clock or 3)
+        # Lock the ETU so _confirm_etu() cannot clear bit_samples after
+        # parity failures on post-ATR noise bytes.  Without this, two
+        # consecutive parity errors would trigger an ETU re-measure that
+        # overwrites clock_skip=372 with a wrong value from pre-ATR data.
+        self._etu_confirm_count = 3
+        self._etu_fail_count = 0
         self.state = 'DATA'
         self._resync = True  # Wait for inter-frame idle gap before reading commands
         # PPS may be attempted once after this ATR.
@@ -1476,6 +1519,7 @@ class Decoder(srd.Decoder):
         # and real APDUs are never reached.
         if (pps0 & 0x8F) != 0:
             self.log("0xFF followed by 0x%02x is not a valid PPS0 - idle line, skipping" % pps0)
+            self._resync = True
             return
         pps1 = 0; pps2 = 0; pps3 = 0
         if (pps0 & 0b00010000):
@@ -1678,7 +1722,7 @@ class Decoder(srd.Decoder):
                     self.read_byte()
                     self._resync = True
                 return True
-            elif (firstByte == 0x3b): # Probably ATR
+            elif (firstByte == 0x3b) and not self._atr_parsed: # Probably ATR (only if no ATR yet)
                 self.handle_atr(self.wait({'skip': 0}))
                 return True
             elif bin(firstByte).count('1') >= 6:
