@@ -68,10 +68,13 @@ def parse_reader_log(path):
 
 
 def parse_pcap(path):
-    """Return list of (apdu_hex, flags) tuples for APDU (sub_type 0) packets."""
+    """Return (apdu_list, atr_count) where apdu_list is list of (apdu_hex, flags)
+    tuples for APDU (sub_type 0) packets, and atr_count is the number of ATR
+    (sub_type 1) packets."""
     data = open(path, 'rb').read()
     off = 24
     out = []
+    atr_count = 0
     while off < len(data):
         if off + 16 > len(data):
             break
@@ -87,7 +90,9 @@ def parse_pcap(path):
         if g[12] == 0:  # APDU
             flags = g[15]  # GSMTAP_FLAG_BAD_FCS etc.
             out.append((g[16:].hex(), flags))
-    return out
+        elif g[12] == 1:  # ATR
+            atr_count += 1
+    return out, atr_count
 
 
 def is_cat(apdu_hex):
@@ -151,7 +156,7 @@ def main():
         reader = parse_reader_log(args.reader_log)
         pcap_path = args.pcap
 
-    pcap_raw = parse_pcap(pcap_path)
+    pcap_raw, atr_count = parse_pcap(pcap_path)
     pcap = [h for h, _ in pcap_raw]
     pcap_flags = [f for _, f in pcap_raw]
 
@@ -207,6 +212,7 @@ def main():
     # --- Report ---
 
     print('reader exchanges         : %d' % len(reader))
+    print('capture ATRs             : %d' % atr_count)
     print('capture APDUs            : %d' % len(pcap))
     print('byte-exact matches (LCS) : %d' % len(matched_reader))
     print('reader exchanges not in capture (pre-capture / dropped): %d'

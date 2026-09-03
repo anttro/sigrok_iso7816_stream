@@ -28,7 +28,7 @@ from .gsmtap_stream import (GsmtapStreamSender,
     GSMTAP_SIM_RST_EVENT, GSMTAP_SIM_VCC_EVENT,
     GSMTAP_FLAG_BAD_FCS)
 
-VERSION = '1.1.2'
+VERSION = '1.1.3'
 
 
 
@@ -650,7 +650,9 @@ class Decoder(srd.Decoder):
                 last_sn = sn
             if len(spacings) < 3:
                 return False
-            period = self._robust_min(spacings)
+            # Use average period instead of robust_min to handle varying CLK periods
+            # (e.g., 4,3,3 alternating pattern).
+            period = sum(spacings) / len(spacings)
             if 2 <= period <= 100000:
                 self._samples_per_clock = period
                 self.log("clock period (samples):", period)

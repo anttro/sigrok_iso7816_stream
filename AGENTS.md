@@ -118,27 +118,23 @@ The acceptance criteria are:
 - All traces must be tested in **both modes** (ATR-included and mid-session)
   to verify the decoder works correctly regardless of user setting.
 
-**Current status (v1.1.2):**
+**Current status (v1.1.3, average CLK period fix):**
 
 | Trace | ATR-included APDUs | mid-session APDUs | Notes |
 |-------|-------------------:|------------------:|-------|
-| `test_8_raw16` | 0 | 0 | decode failure (vacuous pass now caught) |
-| `test_7_raw16` | 0 | 0 | decode failure (vacuous pass now caught) |
-| `phone_reference_live_16M` | 2 | 224 | mid-session works well |
-| `samsung_phone_sample` | 2 | 211 | mid-session works well |
-| `samsung_phone2_sample` | 1 | 0 | mostly broken |
-| `sunrise_phone_sample` | 711 | 1 | ATR-included works, 6 BAD_FCS |
-| `sim_turnon_2_clicking_around_ds` | 0 | 0 | no APDUs decoded |
+| `test_8_raw16` | 38 | 38 | both modes now work (fixed average CLK period) |
+| `test_7_raw16` | 8 | 8 | both modes now work (fixed average CLK period) |
+| `phone_reference_live_16M` | 0 | 224 | ATR-included: no ATR in capture (gated CLK), mid-session works |
+| `samsung_phone_sample` | 2 | 0 | mid-session finds false ATR, no APDUs |
+| `samsung_phone2_sample` | 0 | 61 | mid-session: 61 garbage (gated CLK, no ATR framing) |
+| `sunrise_phone_sample` | 711 | 1 | ATR-included works; mid-session finds ATR but 1 APDU |
+| `sim_turnon_2_clicking_around_ds` | 0 | 0 | no ATR in trace (power-on capture) |
 
-The `test_8`/`test_7` stored traces decode to **0 capture APDUs**;
-`vs_reader.py` now reports `RESULT: UNCLEAN` for these cases. The previous
-baseline was passing vacuously because an empty pcap has 0 garbage by
-definition. This is a known regression/limitation of the stored sample files
-and the decoder state machine.
+**Note on v1.1.3 fix:** The decoder measures CLK period as an average instead of using the minimum recurring period. This correctly handles traces where CLK periods alternate (e.g., 4,3,3 pattern for ~5.33MHz CLK at 16MHz sample rate). The fix changed `_measure_clock_period()` to use `sum(spacings) / len(spacings)` instead of `_robust_min(spacings)`, giving accurate `spc` values like 3.333... instead of 3. This corrected the `_wait_clk_rising()` skip calculation, fixing the post-ATR byte alignment issue.
 
 ### Versioning
 
-The decoder version is defined in `pd.py` as `VERSION = '1.1.2'`.
+The decoder version is defined in `pd.py` as `VERSION = '1.1.3'`.
 The version is printed to the log on decoder startup.
 
 ### Testing after decoder changes
