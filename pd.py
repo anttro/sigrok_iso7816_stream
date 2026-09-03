@@ -28,7 +28,7 @@ from .gsmtap_stream import (GsmtapStreamSender,
     GSMTAP_SIM_RST_EVENT, GSMTAP_SIM_VCC_EVENT,
     GSMTAP_FLAG_BAD_FCS)
 
-VERSION = '1.1.0'
+VERSION = '1.1.2'
 
 
 
@@ -328,6 +328,10 @@ class Decoder(srd.Decoder):
         # ever present) eventually falls back to T=0 parsing instead of
         # looping forever.
         self._atr_hunt_count = 0
+        # PPS is only attempted once after an ATR/warm reset.  Prevents
+        # idle-line 0xFF bytes from being parsed as an endless stream of
+        # PPS requests when the card does not actually perform PPS.
+        self._pps_attempted = False
         self.gsmtap = None
         self.pcap_fh = None
         self.track_rst = False
@@ -525,6 +529,7 @@ class Decoder(srd.Decoder):
                     self.bit_samples = None
                     self.state = 'FIND START'
                     self._atr_hunt_count = 0
+                    self._pps_attempted = False
                 if (emit_lvl == 1):
                     # RST deasserted (HIGH): card released from reset and
                     # will send a fresh ATR.  However, the 10ms hysteresis
@@ -539,6 +544,7 @@ class Decoder(srd.Decoder):
                     else:
                         self.state = 'FIND START'
                         self._atr_hunt_count = 0
+                        self._pps_attempted = False
                         self.log("warm reset: re-arming ATR hunt")
         if (self.track_vcc):
             lvl = pins[self.VCC_IDX]
@@ -1367,8 +1373,15 @@ class Decoder(srd.Decoder):
         # A real ATR was parsed at the default rate, so clock_skip=372 is now
         # confirmed correct -- the CLK-sync reader is trusted from here on.
         self._clock_skip_confident = True
+        # The ATR is always sent at the default rate (372 CLK/bit).
+        # _measure_etu() may have inflated clock_skip via inter-byte gap
+        # averaging; reset to 372 so PPS (also at the default rate) is
+        # read at the correct bit boundary.
+        self.clock_skip = 372
         self.state = 'DATA'
         self._resync = True  # Wait for inter-frame idle gap before reading commands
+        # PPS may be attempted once after this ATR.
+        self._pps_attempted = False
 
         if (self.options['protocol'] == "T=0"):
             self.hasT0 = True
@@ -1446,6 +1459,9 @@ class Decoder(srd.Decoder):
         return isIBlock,packet;
     
     def handle_pps(self):
+        # Mark PPS attempted so idle 0xFF bytes after a failed/no-PPS
+        # scenario do not loop back into PPS detection indefinitely.
+        self._pps_attempted = True
         lrc = 0
         ss = self.peeked_samplenum
         pps = self.read_byte()
@@ -1651,7 +1667,16 @@ class Decoder(srd.Decoder):
 
             firstByte = self.peek_byte();
             if (firstByte == 0xFF): # PPS Request
-                self.handle_pps();
+                # Only one PPS attempt is made after an ATR/warm reset.
+                # Idle 0xFF bytes after a failed/no-PPS scenario would
+                # otherwise trigger PPS detection in an infinite loop.
+                if not self._pps_attempted:
+                    self.handle_pps();
+                else:
+                    # Idle 0xFF noise after the PPS window has closed.
+                    # Consume it and re-sync on the next real start bit.
+                    self.read_byte()
+                    self._resync = True
                 return True
             elif (firstByte == 0x3b): # Probably ATR
                 self.handle_atr(self.wait({'skip': 0}))

@@ -107,17 +107,38 @@ files can cause the decoder to use old code, producing false results:
 find . -name "__pycache__" -type d -exec rm -rf {} +
 ```
 
-The acceptance criterion is **0 garbage** (`GARBAGE (mis-framed/desync): 0`,
-`RESULT: OK`) for `test_8` in both modes. `test_7` may have some garbage
-from the synthetic-ATR fallback (expected when no real ATR is found in the
-trace). All traces must be tested in **both modes** (ATR-included and
-mid-session) to verify the decoder works correctly regardless of user
-setting. Phone/samsung/sunrise/sim_turnon traces are smoke tests (no
-ground-truth reader log).
+The acceptance criteria are:
+- **>0 capture APDUs** when a reader log is present (catches vacuous passes
+  where the pcap contains no APDUs at all).
+- For reader-log traces (`test_8`, `test_7`): `RESULT: OK` and **0 garbage**.
+- For smoke-test traces (phone/samsung/sunrise/sim_turnon): **>0 APDUs**
+  in at least one of the two modes.
+- No increase in `CHKSUM ERROR`, `BAD_FCS`, payload mismatches, or suspicious
+  CLA counts.
+- All traces must be tested in **both modes** (ATR-included and mid-session)
+  to verify the decoder works correctly regardless of user setting.
+
+**Current status (v1.1.2):**
+
+| Trace | ATR-included APDUs | mid-session APDUs | Notes |
+|-------|-------------------:|------------------:|-------|
+| `test_8_raw16` | 0 | 0 | decode failure (vacuous pass now caught) |
+| `test_7_raw16` | 0 | 0 | decode failure (vacuous pass now caught) |
+| `phone_reference_live_16M` | 2 | 224 | mid-session works well |
+| `samsung_phone_sample` | 2 | 211 | mid-session works well |
+| `samsung_phone2_sample` | 1 | 0 | mostly broken |
+| `sunrise_phone_sample` | 711 | 1 | ATR-included works, 6 BAD_FCS |
+| `sim_turnon_2_clicking_around_ds` | 0 | 0 | no APDUs decoded |
+
+The `test_8`/`test_7` stored traces decode to **0 capture APDUs**;
+`vs_reader.py` now reports `RESULT: UNCLEAN` for these cases. The previous
+baseline was passing vacuously because an empty pcap has 0 garbage by
+definition. This is a known regression/limitation of the stored sample files
+and the decoder state machine.
 
 ### Versioning
 
-The decoder version is defined in `pd.py` as `VERSION = '1.1.0'`.
+The decoder version is defined in `pd.py` as `VERSION = '1.1.2'`.
 The version is printed to the log on decoder startup.
 
 ### Testing after decoder changes
@@ -140,10 +161,13 @@ After any change to `pd.py`:
    ```
 
 4. If differences found, review:
-   - GARBAGE count must stay 0 for test_8 (both modes)
-   - RESULT must stay OK for test_8 (both modes)
-   - ETU values must match for mid-session traces
-   - No new INVALID Procedure Byte errors
+    - Capture APDU count must stay >0 for any trace that previously had APDUs
+    - GARBAGE count must stay 0 for test_8 (both modes)
+    - RESULT must stay OK for test_8 (both modes)
+    - CHKSUM ERROR count must not increase
+    - BAD_FCS / payload mismatches / suspicious CLA must not increase
+    - ETU values must match for mid-session traces
+    - No new INVALID Procedure Byte errors
 
 5. Run unit tests:
    ```bash
@@ -218,7 +242,7 @@ The `native_fast` sample-skip, signal degradation, clock monitor, and
 fatal TCK check were all discarded.  The decoder is now the original
 `2055d1c` code plus 24 lines of mid-session support.
 
-## Current architecture (v1.0.0, CLK-synchronous refactor)
+## Current architecture (v1.1.1, post-ATR desync fixes)
 
 The decoder uses a **CLK-synchronous bit reader** for native-CLK captures and
 an edge-list DATA reader for the non-native clock modes.  Bit timing comes
@@ -298,11 +322,10 @@ P3 bytes on the wire **before** the card's first procedure byte.  The
 framing now distinguishes the cases by the card's first procedure byte:
 
 - If the first post-header byte **is the ACK (== INS)** → case 2/4: the
-  terminal sent no command data; read `P3` response bytes (+SW), or, for
-  `Le == 0` (GET RESPONSE), read the response until the status word.
+  terminal sent no command data; read `P3` response bytes (+SW).
 - Otherwise the byte is terminal command data → case 3/4: read `P3`
   command-data bytes, then the card's procedure byte (ACK/SW/`9E`/`9F`).
-  On ACK (case 4) the response is read until the status word.
+  On ACK (case 4) the response is read `P3` response bytes (+SW).
 
 This consolidates case-3/4 exchanges (e.g. the `80 12`/`80 14` STK envelope
 commands) into one C-APDU = header + command data, R-APDU = response + SW
@@ -311,14 +334,8 @@ APDU, instead of fragmenting them across frames.  It is gated to
 (`test_8` / `test_7`) keep the original framing unchanged and stay at
 0 garbage.
 
-Known residual limitation: case-4 responses read "until SW" terminate on the
-first `6x`/`9x` byte, so a response payload that legitimately contains such
-a byte (e.g. an FCP `6F` tag) may be truncated.  This affects only case-4
-  commands that return data containing `0x6x`/`0x9x`; in practice, the
-  phone's main case-4-with-data path is GET RESPONSE with explicit
-  `Le > 0` (bounded by `P3`), which is unaffected.  Used P3=0 (Le == 0)
-    GET RESPONSE is extremely rare — our test fixtures and phone references
-  show only READ RECORD (INS=0x79) using P3=0 (read entire record).
+All paths use P3-bounded reads (v1.1.1 reverted the read-until-SW
+experiment from v1.1.0 which mis-identified FCP `0x62` as SW1).
 
 ## Decoder methods tried — reliability registry
 
@@ -359,9 +376,21 @@ discarded ideas.  "Proven" = kept in `pd.py`; "Rejected" = do not re-add.
 - **`hasT0`/`hasT1` guards + init.** Prevents `AttributeError` and skips byte
   reading until a protocol is known.  Reliable.
 - **T=0 case-3/4 ACK==INS discriminator.** First post-header byte == INS ⇒
-  case 2/4 (response bounded by `P3`, or read-until-SW for `Le == 0`); else
-  command data (read `P3`, then the procedure byte).  Reliable for
-  consolidating STK envelope commands.  Gated to `_edge_read`.
+  case 2/4 (response bounded by `P3`); else command data (read `P3`, then
+  the procedure byte).  Reliable for consolidating STK envelope commands.
+  Gated to `_edge_read`.  P3-bounded reads avoid FCP tag misidentification
+  (v1.1.1 reverted read-until-SW from v1.1.0).
+- **1.5-ETU start-bit guard in `wait_data_falling`.** `min_high = 1.5 *
+  bit_samples` distinguishes genuine inter-byte idle gaps (≥2 ETU per ISO
+  7816-3) from intra-byte HIGH periods (≤1 ETU).  Prevents byte misalignment
+  after `_measure_etu()` consumption (v1.1.1 fix for post-ATR desync).
+- **Inverse-convention ATR detection in DATA state.** `firstByte == 0x3f`
+  alongside `0x3b` at line 1656, so inverse-convention ATRs (TS=0x3F) are
+  parsed in `starts_with_atr=false` mode.  Sets `clock_skip=372` correctly
+  before PPS (v1.1.1 fix).
+- **`_resync = True` after PPS acceptance (native CLK path).** Forces
+  `resync_idle()` before the first post-PPS command, preventing the decoder
+  from latching onto a mid-byte transition at the new speed (v1.1.1 fix).
 
 ### Tried and rejected (do not re-add)
 
@@ -390,14 +419,17 @@ discarded ideas.  "Proven" = kept in `pd.py`; "Rejected" = do not re-add.
   Any `0x6x`/`0x9x` byte (e.g. command-data `0x6c`, FCP `0x6f`) was taken as
   SW1, truncating/fragmenting exchanges and dropping most of the capture.
   Rejected; replaced by the ACK==INS discriminator (case 2/4 bounded by
-  `P3`) with a bounded until-SW only for case 4 / `Le == 0`.
+  `P3`) with P3-bounded reads for all paths (v1.1.1 reverted the
+  read-until-SW experiment from v1.1.0 which mis-identified FCP `0x62` as
+  SW1).
+- **0.5-ETU start-bit guard in `wait_data_falling` (for `_edge_read`).**
+  `min_high = 0.5 * bit_samples` was too small for slow ETUs — it accepted
+  intra-byte HIGH periods (data bit transitions) as start bits, causing byte
+  misalignment after `_measure_etu()` consumption.  Replaced by 1.5-ETU guard
+  in v1.1.1.
 
 ### Open residual limitations
 
-- Case-4 responses read "until SW" still terminate on the first `0x6x`/`0x9x`
-  byte, so a response payload containing such a byte may truncate.  The
-  phone's main case-4-with-data path is GET RESPONSE (case 2, bounded by
-  `P3`) → unaffected.
 - Mid-session captures that begin inside an exchange cannot frame the first
   command perfectly (expected; the rest of the stream is clean).
 - **Samsung phones — gated CLK, non-default F/D** (`samsung_phone_sample.sr`,

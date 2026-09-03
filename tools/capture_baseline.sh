@@ -15,6 +15,9 @@ run_test() {
     output=$("$@" 2>&1) || true
     # Extract key metrics
     echo "$output" | grep -E "iso7816 decoder v|etu recovered|ENDATR|CHKSUM ERROR|INVALID Procedure|desynced APDU|warm reset|Invalid TS|No valid TS" | head -20
+    # CHKSUM errors are a key degradation signal.
+    chksum_count=$(echo "$output" | grep -c "CHKSUM ERROR" || true)
+    echo "CHKSUM ERROR count: $chksum_count"
     # Check for vs_reader results if pcap exists
     if [ -f /tmp/out.pcap ]; then
         local reader_log=""
@@ -23,7 +26,11 @@ run_test() {
             test_7*) reader_log="examples/test_7_reader.log" ;;
         esac
         if [ -n "$reader_log" ] && [ -f "$reader_log" ]; then
-            python3 tools/vs_reader.py "$reader_log" /tmp/out.pcap 2>&1 | grep -E "GARBAGE|RESULT"
+            python3 tools/vs_reader.py "$reader_log" /tmp/out.pcap 2>&1 || true
+        else
+            # No ground-truth reader log; run pcap-only analysis to surface
+            # BAD_FCS / suspicious CLA / payload issues.
+            python3 tools/vs_reader.py --pcap-only /tmp/out.pcap 2>&1 || true
         fi
     fi
     echo ""

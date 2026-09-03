@@ -43,5 +43,8 @@ else
     echo "  - RESULT must be OK for test_8 (both modes)"
     echo "  - ETU values must match for mid-session traces"
     echo "  - No new INVALID Procedure Byte errors"
+    echo "  - CHKSUM ERROR count must not increase"
+    echo "  - BAD_FCS / payload mismatches / suspicious CLA must not increase"
+    echo "  - Capture APDU count must be >0 when reader log is present"
     exit 1
 fi
