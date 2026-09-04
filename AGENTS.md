@@ -142,11 +142,28 @@ match the reader log format:
   but only 9 byte-exact matches.  The decoder finds all exchanges but
   groups them incorrectly.
 
-**Root cause:** The ATR-based T=0 procedure-byte loop (non-`_edge_read`
-path, lines 1898–1941) accumulates bytes into `packet` but the grouping
-logic does not match the reader's TPDU boundaries.  The packet emitted
-per exchange contains merged command+response data in a format that
-`vs_reader.py` cannot match against the reader log.
+**Root cause:** `_edge_read` is initialized to `True` and never set to
+`False`, so the edge-read T=0 procedure loop (lines 1808–1895) always
+executes — the ATR-based procedure loop (lines 1898–1941) is dead code.
+The edge-read path has two bugs:
+
+1. **NULLs treated as command data.**  The first post-header byte is
+   checked for ACK; if it's NULL (0x60), it enters the case-3/4 branch
+   and gets appended as command data.
+
+2. **"Read until SW" truncates GET RESPONSE.**  The ACK handler reads
+   until it sees a byte in 0x6x/0x9x range, but FCP tag 0x62 matches
+   this pattern, so GET RESPONSE stops after 1 byte of data.
+
+#### CLA validation note
+
+All example traces (`test_7`, `test_8`, `phone_reference`, `samsung`,
+`sunrise`, `sim_turnon`) contain only CLA `0x00` (interindustry) and
+`0x80` (USIM/CAT).  The decoder must **not** mandate specific CLA values —
+other CLA values (e.g. `0x04`, `0x08`, `0x84`, `0xA0`, `0xB0`) are valid
+per ISO 7816-4 / 3GPP and must be accepted.  However, during test runs
+against the example traces, any CLA value other than `0x00` or `0x80` is
+an error flag indicating the decoder mis-framed the byte stream.
 
 **Current smoke-test status:**
 
