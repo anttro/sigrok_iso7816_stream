@@ -128,21 +128,11 @@ must match them.
 
 #### Known issues (must be fixed to meet criteria)
 
-**T=0 framing produces incorrect APDUs.**  The decoder's output does not
-match the reader log format:
+~~**T=0 framing produces incorrect APDUs.**~~ Both bugs are now fixed.
 
-- **SELECT + GET RESPONSE grouped into one APDU.**  The reader log has
-  these as separate TPDUs (e.g. `00a40004023f006125` then
-  `00c0000025 622382...9000`).  The decoder concatenates them and adds
-  extra bytes (`6060` prefix on SELECT, truncated GET RESPONSE data).
-
-- **test_7 severely mis-framed.**  37 reader entries vs 8 garbled capture
-  APDUs.  The decoder produces corrupted byte sequences that don't match
-  any reader exchange.
-
-- **test_8 partially working.**  38 capture APDUs vs 37 reader entries,
-  but only 9 byte-exact matches.  The decoder finds all exchanges but
-  groups them incorrectly.
+**Remaining limitation:** sunrise and sim_turnon mid-session still
+underperform (1 and 9 APDUs vs 1077/1390 ATR-included).  This is likely
+a timing issue with gated-CLK traces, not a framing bug.
 
 **Root cause:** `_edge_read` is initialized to `True` and never set to
 `False`, so the edge-read T=0 procedure loop (lines 1808–1895) always
@@ -154,10 +144,11 @@ The edge-read path had two bugs:
    branch and got appended as command data.  Fixed by skipping NULLs
    before the ACK check.
 
-2. **"Read until SW" truncates GET RESPONSE.**  The ACK handler reads
-   until it sees a byte in 0x6x/0x9x range, but FCP tag 0x62 matches
-   this pattern, so GET RESPONSE stops after 1 byte of data.
-   (Not yet fixed — keeping old behavior to avoid regression.)
+2. **"Read until SW" truncates GET RESPONSE (FIXED).**  The ACK handler
+   read until it saw a byte in 0x6x/0x9x range, but FCP tag 0x62
+   matched this pattern, truncating GET RESPONSE to 1-2 bytes.  Fixed
+   by using P3-bounded reads (read exactly P3 bytes then SW1 SW2) for
+   case-2 commands where P3 = Le.
 
 #### CLA validation note
 
