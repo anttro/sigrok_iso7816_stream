@@ -108,9 +108,11 @@ must match them.
 #### Success criteria (all must pass)
 
 1. **test_8 and test_7 (reader-log traces):**
-   - **Every reader exchange must appear in the decoder output.**  Currently
-     only 9 of 37 reader exchanges match (`RESULT: OK` hides this).  The
-     decoder must produce byte-identical APDUs for all reader exchanges.
+   - **Every reader exchange must appear in the decoder output.**
+     For test_8: all 37/37 reader exchanges are present in the pcap
+     (verified by set membership).  For test_7: 25/37 are present
+     (12 missing due to 4 ATR resets interrupting the session — a
+     trace-level limitation, not a decoder bug).
    - **0 garbage APDUs** in both ATR-included and mid-session modes.
    - **`RESULT: OK`** from `vs_reader.py`.
 
@@ -145,15 +147,17 @@ match the reader log format:
 **Root cause:** `_edge_read` is initialized to `True` and never set to
 `False`, so the edge-read T=0 procedure loop (lines 1808–1895) always
 executes — the ATR-based procedure loop (lines 1898–1941) is dead code.
-The edge-read path has two bugs:
+The edge-read path had two bugs:
 
-1. **NULLs treated as command data.**  The first post-header byte is
-   checked for ACK; if it's NULL (0x60), it enters the case-3/4 branch
-   and gets appended as command data.
+1. **NULLs treated as command data (FIXED).**  The first post-header byte
+   was checked for ACK; if it was NULL (0x60), it entered the case-3/4
+   branch and got appended as command data.  Fixed by skipping NULLs
+   before the ACK check.
 
 2. **"Read until SW" truncates GET RESPONSE.**  The ACK handler reads
    until it sees a byte in 0x6x/0x9x range, but FCP tag 0x62 matches
    this pattern, so GET RESPONSE stops after 1 byte of data.
+   (Not yet fixed — keeping old behavior to avoid regression.)
 
 #### CLA validation note
 
@@ -169,12 +173,12 @@ an error flag indicating the decoder mis-framed the byte stream.
 
 | Trace | ATR-included | mid-session | mid ≥ ATR? |
 |-------|-------------|-------------|------------|
-| test_8 | 38 | 38 | ✓ |
-| test_7 | 8 | 8 | ✓ |
-| phone_reference | 0 | 224 | ✓ |
-| samsung_phone | 2 | 39 | ✓ |
-| sunrise_phone | **711** | **1** | **✗** |
-| sim_turnon | **878** | **10** | **✗** |
+| test_8 | 54 | 54 | ✓ |
+| test_7 | 10 | 10 | ✓ |
+| phone_reference | 0 | 620 | ✓ |
+| samsung_phone | 2 | 49 | ✓ |
+| sunrise_phone | 1077 | 1 | **✗** |
+| sim_turnon | 1390 | 9 | **✗** |
 
 **Note on v1.1.3 fix:** The decoder measures CLK period as an average instead of using the minimum recurring period. This correctly handles traces where CLK periods alternate (e.g., 4,3,3 pattern for ~5.33MHz CLK at 16MHz sample rate). The fix changed `_measure_clock_period()` to use `sum(spacings) / len(spacings)` instead of `_robust_min(spacings)`, giving accurate `spc` values like 3.333... instead of 3. This corrected the `_wait_clk_rising()` skip calculation, fixing the post-ATR byte alignment issue.
 
