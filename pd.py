@@ -1806,21 +1806,22 @@ class Decoder(srd.Decoder):
                     #     is terminal command data; read P3 command-data bytes,
                     #     then the card's procedure byte (ACK/SW/9x).
                     pb0 = self.read_byte()
+                    # Skip NULL (0x60) procedure bytes: the card may send
+                    # NULLs while processing before the ACK.  Without this
+                    # the NULLs are mis-identified as case-3/4 command data.
+                    while pb0 == 0x60:
+                        pb0 = self.read_byte()
                     if (pb0 == bIns or pb0 == (bIns ^ 0xFF)):
                         # ACK (full match or ~INS): case 2/4 (response data
-                        # follows).  Read the full response until the status
-                        # word.  The old code read exactly P3 bytes then
-                        # assumed the next two were SW, but if the card sends
-                        # fewer than P3 bytes the decoder would eat the next
-                        # command's header as "response data", concatenating
-                        # multiple exchanges into one blob.
-                        for _ in range(512):
-                            b = self.read_byte()
-                            packet.append(b)
-                            if ((b & 0xF0) == 0x60 or (b & 0xF0) == 0x90):
-                                packet.append(self.read_byte())
-                                got_sw = True
-                                break
+                        # follows).  Read exactly P3 response bytes, then
+                        # SW1 SW2.  P3-bounded reads avoid the "read until
+                        # SW" bug where FCP tag 0x62 is misidentified as
+                        # SW1, truncating GET RESPONSE data.
+                        for _ in range(p3):
+                            packet.append(self.read_byte())
+                        packet.append(self.read_byte())  # SW1
+                        packet.append(self.read_byte())  # SW2
+                        got_sw = True
                     else:
                         # Case 2/3/4: determine data direction from P3 and
                         # the first post-header byte.
