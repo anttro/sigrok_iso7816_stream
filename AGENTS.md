@@ -1,22 +1,45 @@
 # AGENTS.md
 
-## Policy: decoder changes must be validated against sample data
+## Policy: decoder changes must be validated against ALL example traces
 
-Every change to `pd.py` must be followed by running the decoder against
-the example traces and comparing the output against the ground-truth
-reader logs.
+Every change to `pd.py` must be followed by running the full test suite:
 
-### Complete auto-test trace list
+1. **Clear bytecode cache first** - stale `.pyc` files cause false results:
+   ```bash
+   find . -name "__pycache__" -type d -exec rm -rf {} +
+   find . -name "*.pyc" -delete 2>/dev/null
+   ```
 
-| Trace | CLK | DATA | RST | VCC | Mode |
-|-------|-----|------|-----|-----|------|
-| `test_8_raw16.sr` | CLK | DATA | RST | VCC | ATR + mid-session |
-| `test_7_raw16.sr` | CLK | DATA | RST | VCC | ATR |
-| `phone_reference_live_16M.sr` | CLK | DATA | RST | — | mid-session, gated CLK |
-| `samsung_phone_sample.sr` | CLK | DATA | RST | VCC | mid-session, gated CLK, F=512/D=32 |
+2. **Run all traces in BOTH modes** (ATR-included and mid-session):
+   ```bash
+   # Run decoder for each trace/mode combination
+   for trace in test_8_raw16 test_7_raw16 phone_reference_live_16M \
+               samsung_phone_sample sunrise_phone_sample sim_turnon_2_clicking_around_ds; do
+       for mode in true false; do
+           # Run sigrok-cli and vs_reader as shown below
+           # Capture APDUs, GARBAGE count, and RESULT
+       done
+   done
+   ```
 
-| `sunrise_phone_sample.sr` | CLK | DATA | — | — | mid-session, gated CLK |
-| `sim_turnon_2_clicking_around_ds.sr` | CLK | DATA | — | — | SIM power-on, gated CLK |
+3. **Acceptance criteria** (must ALL pass):
+   - **test_8 both modes**: 54 APDUs, 37/37 reader exchanges, 0 GARBAGE, RESULT: OK
+   - **test_7 both modes**: 10 APDUs, 25/37 reader exchanges (12-27 missing due to ATR resets), 0 GARBAGE, RESULT: OK
+   - **All smoke-test traces**: >0 APDUs in at least one mode
+   - **Mid-session >= ATR-included**: `starts_with_atr=false` must capture >= `starts_with_atr=true` APDUs
+   - **No regressions**: GARBAGE count must not increase, no new BAD_FCS/payload mismatches
+   - **Unit tests**: 12/12 pass (`python3 tests/test_gsmtap.py -v`)
+
+### Important: CLK signal behavior matters
+
+- **Constant CLK** (test_7, test_8): Card reader keeps CLK running continuously
+  - Decoder can reliably sample DATA on each CLK edge
+  - Both ATR-included and mid-session modes work correctly
+
+- **Gated CLK** (phone traces): Phone stops CLK when idle, restarts before next APDU set
+  - Decoder must handle CLK gaps and restart properly
+  - ETU auto-detection from DATA edges is critical
+  - Mid-session mode is primary use case for these traces
 
 ```bash
 # --- test_8 (ATR-included, starts_with_atr=true) ---
