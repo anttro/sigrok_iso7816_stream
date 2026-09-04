@@ -19,6 +19,8 @@ import statistics
 import sys
 import zipfile
 
+import numpy as np
+
 
 # ---------------------------------------------------------------------------
 # .sr file reading
@@ -52,34 +54,13 @@ def parse_sr_metadata(path):
     return info
 
 
-def read_sr_channels(path, max_samples=None, step=1, start_at=0):
-    """Yield (sample_index, byte_value) tuples from logic chunks.
-
-    Chunks are read in numeric order (logic-1-1, logic-1-2, ..., logic-1-N).
-    Args:
-        max_samples: Stop after yielding this many samples (None = all).
-        step: Read every Nth byte from each chunk (1 = every byte).
-        start_at: Skip to this sample index before yielding.
-    """
+def read_sr_all(path):
+    """Read all logic samples into a numpy uint8 array."""
     with zipfile.ZipFile(path, 'r') as zf:
         chunk_names = [n for n in zf.namelist() if n.startswith('logic-1-')]
         chunk_names.sort(key=lambda n: int(n.split('-')[-1]))
-        first_data = zf.read(chunk_names[0])
-        chunk_size = len(first_data)
-        idx = 0
-        for chunk in chunk_names:
-            if idx + chunk_size <= start_at:
-                idx += chunk_size
-                continue
-            data = zf.read(chunk)
-            for i in range(0, len(data), step):
-                if idx < start_at:
-                    idx += step
-                    continue
-                if max_samples is not None and (idx - start_at) >= max_samples:
-                    return
-                yield idx, data[i]
-                idx += step
+        chunks = [zf.read(c) for c in chunk_names]
+    return np.frombuffer(b''.join(chunks), dtype=np.uint8)
 
 
 def get_channel_bit(metadata, channel_name):
@@ -94,38 +75,39 @@ def get_channel_bit(metadata, channel_name):
 # Signal measurement helpers
 # ---------------------------------------------------------------------------
 
-def measure_clk(channel_data, sr):
-    """Measure CLK frequency from transitions. Returns dict."""
-    if not channel_data:
+def extract_bit(arr, bit):
+    """Extract a single bit from a numpy uint8 array -> bool array."""
+    return (arr >> bit) & 1
+
+
+def measure_clk_fast(clk_arr, sr):
+    """Measure CLK frequency from rising edges using numpy."""
+    if len(clk_arr) == 0:
         return {'ok': False, 'reason': 'no data'}
 
-    # Find all rising edges
-    edges = []
-    for i in range(1, len(channel_data)):
-        if channel_data[i - 1] == 0 and channel_data[i] == 1:
-            edges.append(i)
+    # Find rising edges: 0->1 transitions
+    diffs = np.diff(clk_arr.astype(np.int8))
+    rising = np.where(diffs == 1)[0] + 1  # +1 because diff shifts by 1
 
-    if len(edges) < 2:
+    if len(rising) < 2:
         return {
             'ok': False,
-            'reason': f'only {len(edges)} rising edges (need >= 2)',
-            'transitions': len(edges),
+            'reason': f'only {len(rising)} rising edges (need >= 2)',
+            'transitions': len(rising),
         }
 
-    # Frequency from edge spacings
-    spacings = [edges[i] - edges[i - 1] for i in range(1, len(edges))]
-    median_spc = statistics.median(spacings)
+    spacings = np.diff(rising)
+    median_spc = float(np.median(spacings))
     freq = sr / median_spc if median_spc > 0 else 0
 
-    # Duration of CLK activity (first to last edge)
-    duration_s = (edges[-1] - edges[0]) / sr
+    duration_s = (rising[-1] - rising[0]) / sr
 
-    # Frequency change detection: split into 4 windows, compare median
+    # Frequency change: compare first and last quarter
     freq_change = None
     if len(spacings) >= 20:
         n = len(spacings)
-        q1 = statistics.median(spacings[:n // 4])
-        q4 = statistics.median(spacings[3 * n // 4:])
+        q1 = float(np.median(spacings[:n // 4]))
+        q4 = float(np.median(spacings[3 * n // 4:]))
         if q1 > 0 and q4 > 0:
             f1 = sr / q1
             f4 = sr / q4
@@ -135,7 +117,7 @@ def measure_clk(channel_data, sr):
 
     return {
         'ok': True,
-        'rising_edges': len(edges),
+        'rising_edges': len(rising),
         'frequency_mhz': freq / 1e6,
         'median_period_samples': median_spc,
         'duration_ms': duration_s * 1000,
@@ -143,55 +125,28 @@ def measure_clk(channel_data, sr):
     }
 
 
-def measure_rst(channel_data, sr):
-    """Measure RST transitions. Returns dict."""
-    if not channel_data:
+def count_transitions(arr):
+    """Count transitions in a numpy bool array."""
+    if len(arr) == 0:
+        return 0
+    return int(np.sum(np.diff(arr.astype(np.int8)) != 0))
+
+
+def measure_data_fast(data_arr, clk_arr, sr):
+    """Measure DATA signal using numpy."""
+    if len(data_arr) == 0:
         return {'ok': False, 'reason': 'no data'}
 
-    transitions = 0
-    for i in range(1, len(channel_data)):
-        if channel_data[i] != channel_data[i - 1]:
-            transitions += 1
+    transitions = count_transitions(data_arr)
 
-    stable_pct = (1 - transitions / len(channel_data)) * 100 if channel_data else 100
-    noisy = transitions > len(channel_data) * 0.01  # >1% transitions = noisy
-
-    return {
-        'ok': True,
-        'transitions': transitions,
-        'stable_pct': stable_pct,
-        'noisy': noisy,
-    }
-
-
-def measure_vcc(channel_data, sr):
-    """Measure VCC transitions. Returns dict."""
-    return measure_rst(channel_data, sr)  # Same analysis
-
-
-def measure_data(channel_data, clk_data, sr):
-    """Measure DATA signal and CLK-DATA correlation. Returns dict."""
-    if not channel_data:
-        return {'ok': False, 'reason': 'no data'}
-
-    # Count transitions
-    transitions = 0
-    for i in range(1, len(channel_data)):
-        if channel_data[i] != channel_data[i - 1]:
-            transitions += 1
-
-    # Correlation with CLK: count how many CLK rising edges also have DATA transitions
     clk_data_corr = None
-    if clk_data and len(clk_data) == len(channel_data):
-        matching = 0
-        total_clk_edges = 0
-        for i in range(1, len(channel_data)):
-            if clk_data[i - 1] == 0 and clk_data[i] == 1:  # CLK rising edge
-                total_clk_edges += 1
-                if channel_data[i] != channel_data[i - 1]:
-                    matching += 1
-        if total_clk_edges > 0:
-            clk_data_corr = f'{matching}/{total_clk_edges} ({matching / total_clk_edges * 100:.0f}%)'
+    if len(clk_arr) == len(data_arr) and len(clk_arr) > 1:
+        clk_diffs = np.diff(clk_arr.astype(np.int8))
+        data_diffs = np.diff(data_arr.astype(np.int8))
+        clk_edges = np.where(clk_diffs == 1)[0]
+        if len(clk_edges) > 0:
+            matching = int(np.sum(data_diffs[clk_edges] != 0))
+            clk_data_corr = f'{matching}/{len(clk_edges)} ({matching / len(clk_edges) * 100:.0f}%)'
 
     return {
         'ok': True,
@@ -205,14 +160,7 @@ def measure_data(channel_data, clk_data, sr):
 # ---------------------------------------------------------------------------
 
 def run_analysis(path, clk_name, data_name, rst_name, vcc_name):
-    """Run full signal analysis on a .sr file. Returns results dict.
-
-    Passes:
-    1. First WINDOW samples for initial signal check
-    2. If CLK quiet, scan for first activity (check every 100th sample)
-    3. WINDOW around first activity for CLK frequency, RST/VCC, DATA correlation
-    4. Full trace (every 10th sample) for total transition counts
-    """
+    """Run full signal analysis on a .sr file. Returns results dict."""
     meta = parse_sr_metadata(path)
     sr = meta['samplerate']
 
@@ -221,69 +169,21 @@ def run_analysis(path, clk_name, data_name, rst_name, vcc_name):
     rst_bit = get_channel_bit(meta, rst_name)
     vcc_bit = get_channel_bit(meta, vcc_name)
 
-    WINDOW = 5_000_000  # 5M samples = 312ms at 16 MHz (detailed measurements)
+    raw = read_sr_all(path)
+    total_samples = len(raw)
+    duration_s = total_samples / sr
 
-    # Pass 1: first WINDOW samples
-    clk_win = []
-    data_win = []
-    rst_win = []
-    vcc_win = []
-    has_clk_activity = False
-    for _, bv in read_sr_channels(path, max_samples=WINDOW):
-        if clk_bit is not None:
-            v = (bv >> clk_bit) & 1
-            clk_win.append(v)
-            if v == 1:
-                has_clk_activity = True
-        if data_bit is not None:
-            data_win.append((bv >> data_bit) & 1)
-        if rst_bit is not None:
-            rst_win.append((bv >> rst_bit) & 1)
-        if vcc_bit is not None:
-            vcc_win.append((bv >> vcc_bit) & 1)
-
-    # Pass 2: if CLK was quiet, scan for first activity
-    first_activity_sample = 0
-    if not has_clk_activity and clk_bit is not None:
-        # Scan at every 10000th sample to find where CLK starts
-        scan_step = 10000
-        scan_limit = 2_000_000_000  # 2G samples
-        for sample_idx, bv in read_sr_channels(path, max_samples=scan_limit, step=scan_step):
-            v = (bv >> clk_bit) & 1
-            if v == 1:
-                first_activity_sample = max(0, sample_idx - scan_step * 5)
-                break
-
-        if first_activity_sample > 0:
-            # Re-read WINDOW samples starting from first activity (with chunk-skip)
-            clk_win = []
-            data_win = []
-            for _, bv in read_sr_channels(path, max_samples=WINDOW, start_at=first_activity_sample):
-                if clk_bit is not None:
-                    clk_win.append((bv >> clk_bit) & 1)
-                if data_bit is not None:
-                    data_win.append((bv >> data_bit) & 1)
-
-    # Pass 3: full trace, every 10th sample — count total transitions
-    total_step_samples = 0
-    prev = {}
-    trans = {}
-    for _, bv in read_sr_channels(path, step=10):
-        total_step_samples += 1
-        for name, bit in [('clk', clk_bit), ('data', data_bit), ('rst', rst_bit), ('vcc', vcc_bit)]:
-            if bit is None:
-                continue
-            v = (bv >> bit) & 1
-            if name in prev and v != prev[name]:
-                trans[name] = trans.get(name, 0) + 1
-            prev[name] = v
-
-    real_total = total_step_samples * 10
-    duration_s = real_total / sr
+    # Find first CLK activity
+    first_clk_sample = None
+    if clk_bit is not None:
+        clk_arr = extract_bit(raw, clk_bit)
+        clk_edges = np.where(np.diff(clk_arr.astype(np.int8)) == 1)[0]
+        if len(clk_edges) > 0:
+            first_clk_sample = int(clk_edges[0])
 
     results = {
         'samplerate_mhz': sr / 1e6,
-        'total_samples': real_total,
+        'total_samples': total_samples,
         'duration_ms': duration_s * 1000,
         'channels_found': {
             'CLK': clk_name if clk_bit is not None else None,
@@ -291,33 +191,46 @@ def run_analysis(path, clk_name, data_name, rst_name, vcc_name):
             'RST': rst_name if rst_bit is not None else None,
             'VCC': vcc_name if vcc_bit is not None else None,
         },
-        'first_activity_sample': first_activity_sample,
+        'first_activity_sample': first_clk_sample or 0,
     }
 
-    results['CLK'] = measure_clk(clk_win, sr) if clk_win else {
-        'ok': False, 'reason': f'channel "{clk_name}" not found'}
+    # CLK
+    if clk_bit is not None:
+        results['CLK'] = measure_clk_fast(extract_bit(raw, clk_bit), sr)
+    else:
+        results['CLK'] = {'ok': False, 'reason': f'channel "{clk_name}" not found'}
 
-    rst_t = trans.get('rst', 0)
-    results['RST'] = {
-        'ok': True, 'transitions': rst_t,
-        'stable_pct': (1 - rst_t / max(real_total, 1)) * 100,
-        'noisy': rst_t > real_total * 0.01,
-    } if rst_bit is not None else {
-        'ok': False, 'reason': f'channel "{rst_name}" not found'}
+    # RST
+    if rst_bit is not None:
+        rst_arr = extract_bit(raw, rst_bit)
+        rst_t = count_transitions(rst_arr)
+        results['RST'] = {
+            'ok': True, 'transitions': rst_t,
+            'stable_pct': (1 - rst_t / max(total_samples, 1)) * 100,
+            'noisy': rst_t > total_samples * 0.01,
+        }
+    else:
+        results['RST'] = {'ok': False, 'reason': f'channel "{rst_name}" not found'}
 
-    vcc_t = trans.get('vcc', 0)
-    results['VCC'] = {
-        'ok': True, 'transitions': vcc_t,
-        'stable_pct': (1 - vcc_t / max(real_total, 1)) * 100,
-        'noisy': vcc_t > real_total * 0.01,
-    } if vcc_bit is not None else {
-        'ok': False, 'reason': f'channel "{vcc_name}" not found'}
+    # VCC
+    if vcc_bit is not None:
+        vcc_arr = extract_bit(raw, vcc_bit)
+        vcc_t = count_transitions(vcc_arr)
+        results['VCC'] = {
+            'ok': True, 'transitions': vcc_t,
+            'stable_pct': (1 - vcc_t / max(total_samples, 1)) * 100,
+            'noisy': vcc_t > total_samples * 0.01,
+        }
+    else:
+        results['VCC'] = {'ok': False, 'reason': f'channel "{vcc_name}" not found'}
 
-    results['DATA'] = measure_data(data_win, clk_win, sr) if data_win else {
-        'ok': False, 'reason': f'channel "{data_name}" not found'}
-    # Override DATA transitions with full-trace count (window may miss late activity)
+    # DATA
     if data_bit is not None:
-        results['DATA']['transitions'] = trans.get('data', 0)
+        data_arr = extract_bit(raw, data_bit)
+        clk_arr = extract_bit(raw, clk_bit) if clk_bit is not None else np.array([], dtype=np.uint8)
+        results['DATA'] = measure_data_fast(data_arr, clk_arr, sr)
+    else:
+        results['DATA'] = {'ok': False, 'reason': f'channel "{data_name}" not found'}
 
     return results
 

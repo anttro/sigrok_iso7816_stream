@@ -1,4 +1,4 @@
-=== Baseline captured 2026-09-04T21:41:23+03:00 ===
+=== Baseline captured 2026-09-04T22:17:37+03:00 ===
 
 === test_8 ATR-included ===
 ('iso7816 decoder v1.1.3',)
@@ -526,52 +526,55 @@ RESULT: UNCLEAN - 1 mis-framed capture APDU(s)
 
 === signal diagnostics ===
 --- test_8 ---
+  First activity: sample 1
     Frequency:    5.33 MHz
     Period:       3.0 samples
-    Rising edges: 1503686
+    Rising edges: 71858170
     Transitions:  6
-    Transitions:  10
+    Transitions:  168
     Transitions:  7423
 --- test_7 ---
+  First activity: sample 2
     Frequency:    5.33 MHz
     Period:       3.0 samples
-    Rising edges: 1504031
+    Rising edges: 71428947
     Transitions:  16
-    Transitions:  34
+    Transitions:  444
     Transitions:  8998
 --- phone_reference ---
-  First activity: sample 11460000
+  First activity: sample 11497325
     Frequency:    5.33 MHz
     Period:       3.0 samples
-    Rising edges: 82832
+    Rising edges: 12833950
     Transitions:  0
     Transitions:  78488
 --- samsung_phone_sample ---
+  First activity: sample 3096536
     Frequency:    4.00 MHz
     Period:       4.0 samples
-    Rising edges: 53179
-    Transitions:  4
-    Transitions:  18224
-    Transitions:  107266
+    Rising edges: 14002767
+    Transitions:  38
+    Transitions:  171694
+    Transitions:  117098
 --- samsung_phone2_sample ---
-  First activity: sample 6780000
+  First activity: sample 6753173
     Frequency:    4.00 MHz
     Period:       4.0 samples
-    Rising edges: 63920
-    Transitions:  12838
-    Transitions:  53782
-    Transitions:  178446
+    Rising edges: 11137968
+    Transitions:  54874
+    Transitions:  527738
+    Transitions:  1120748
 --- sunrise_phone_sample ---
-  First activity: sample 90740000
+  First activity: sample 86363931
     Frequency:    3.33 MHz
     Period:       15.0 samples
-    Rising edges: 320930
-    Transitions:  147777
+    Rising edges: 36757077
+    Transitions:  155059
 --- sim_turnon ---
-  First activity: sample 109650000
+  First activity: sample 106842796
     Frequency:    3.12 MHz
     Period:       8.0 samples
-    Rising edges: 644381
+    Rising edges: 56443538
     Transitions:  196341
 === unit tests ===
 test_is_desynced_all_zero_is_not_desync (__main__.TestDesyncHelpers.test_is_desynced_all_zero_is_not_desync) ... ok
@@ -588,6 +591,6 @@ test_build_packet_plain_res_zero (__main__.TestGsmtapFlags.test_build_packet_pla
 test_flag_constant_value (__main__.TestGsmtapFlags.test_flag_constant_value) ... ok
 
 ----------------------------------------------------------------------
-Ran 12 tests in 0.011s
+Ran 12 tests in 0.007s
 
 OK

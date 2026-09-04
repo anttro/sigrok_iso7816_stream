@@ -1238,8 +1238,13 @@ class Decoder(srd.Decoder):
         self._edge_spacings.clear()
         # Try to lock the ETU from the actual CLK frequency before reading the
         # first ATR byte.  This removes the hard-coded clock_skip*3 estimate.
+        # For ATR-included captures, save/restore samplenum so _measure_clock_period
+        # doesn't consume the initial DATA HIGH period that wait_data_falling needs.
         if self._samples_per_clock is None:
+            saved_sn = self.samplenum
             self._measure_clock_period()
+            if self.starts_with_atr:
+                self.samplenum = saved_sn
         # Ensure the sample-domain ETU is available for framing
         # (wait_data_falling / resync_idle) even though the CLK-sync reader
         # itself only needs clock_skip.
