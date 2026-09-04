@@ -1759,6 +1759,17 @@ class Decoder(srd.Decoder):
 
             es = self.peeked_samplenum;
             if (self.hasT0):
+                # Idle-line check before reading the command header.
+                # DATA idles HIGH in direct convention (0xFF) or LOW in
+                # inverse convention (0x00).  If the first byte is idle,
+                # the card is not transmitting — skip it and let the RST
+                # handler re-arm ATR hunt.
+                idle_byte = 0xFF if not self._inverse_convention else 0x00
+                first = self.peek_byte()
+                if first == idle_byte:
+                    self.peeked_byte = None
+                    self._resync = True
+                    return True
                 bClass = self.read_byte()
                 bIns = self.read_byte()
                 p1 = self.read_byte()
@@ -1819,8 +1830,10 @@ class Decoder(srd.Decoder):
                         # SW1, truncating GET RESPONSE data.
                         for _ in range(p3):
                             packet.append(self.read_byte())
-                        packet.append(self.read_byte())  # SW1
-                        packet.append(self.read_byte())  # SW2
+                        sw1 = self.read_byte()
+                        packet.append(sw1)  # SW1
+                        sw2 = self.read_byte()
+                        packet.append(sw2)  # SW2
                         got_sw = True
                     else:
                         # Case 2/3/4: determine data direction from P3 and

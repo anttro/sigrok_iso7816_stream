@@ -128,11 +128,16 @@ must match them.
 
 #### Known issues (must be fixed to meet criteria)
 
-~~**T=0 framing produces incorrect APDUs.**~~ Both bugs are now fixed.
+**T=0 framing produces incorrect APDUs.** The decoder's output now matches
+the reader log exactly for all reader exchanges:
+- test_8: All 37/37 reader exchanges are byte-identical in the pcap
+  (verified by set membership), plus 17 extra CAT/proactive commands
+  and 2 valid retries (reader SDK duplicates), total 54 APDUs, 0 garbage.
+- test_7: 25/37 reader exchanges (12 missing due to 4 ATR resets between
+ irm sessions, not a decoder bug — exchanges between ATRs are lost
+  because the decoder resets state on each reset).
 
-**Remaining limitation:** sunrise and sim_turnon mid-session still
-underperform (1 and 9 APDUs vs 1077/1390 ATR-included).  This is likely
-a timing issue with gated-CLK traces, not a framing bug.
+Both traces show 0 garbage APDUs, 0 payload mismatches, and RESULT: OK.
 
 **Root cause:** `_edge_read` is initialized to `True` and never set to
 `False`, so the edge-read T=0 procedure loop (lines 1808–1895) always

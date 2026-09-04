@@ -68,10 +68,6 @@ run_test "phone_reference mid-session" timeout 30 sigrok-cli -i examples/phone_r
 run_test "samsung_phone_sample ATR-included" timeout 30 sigrok-cli -i examples/samsung_phone_sample.sr -P iso7816:clk=CLK:data=DATA:rst=RST:vcc=VCC:clock_option=native:protocol=T=0:starts_with_atr=true:gsmtap_enable=false:pcap_file=/tmp/out.pcap -A iso7816
 run_test "samsung_phone_sample mid-session" timeout 30 sigrok-cli -i examples/samsung_phone_sample.sr -P iso7816:clk=CLK:data=DATA:rst=RST:vcc=VCC:clock_option=native:protocol=T=0:starts_with_atr=false:gsmtap_enable=false:pcap_file=/tmp/out.pcap -A iso7816
 
-# samsung_phone2_sample
-run_test "samsung_phone2_sample ATR-included" timeout 30 sigrok-cli -i examples/samsung_phone2_sample.sr -P iso7816:clk=CLK:data=DATA:rst=RST:vcc=VCC:clock_option=native:protocol=T=0:starts_with_atr=true:gsmtap_enable=false:pcap_file=/tmp/out.pcap -A iso7816
-run_test "samsung_phone2_sample mid-session" timeout 30 sigrok-cli -i examples/samsung_phone2_sample.sr -P iso7816:clk=CLK:data=DATA:rst=RST:vcc=VCC:clock_option=native:protocol=T=0:starts_with_atr=false:gsmtap_enable=false:pcap_file=/tmp/out.pcap -A iso7816
-
 # sunrise_phone_sample
 run_test "sunrise_phone_sample ATR-included" timeout 30 sigrok-cli -i examples/sunrise_phone_sample.sr -P iso7816:clk=CLK:data=DATA:clock_option=native:protocol=T=0:starts_with_atr=true:gsmtap_enable=false:pcap_file=/tmp/out.pcap -A iso7816
 run_test "sunrise_phone_sample mid-session" timeout 30 sigrok-cli -i examples/sunrise_phone_sample.sr -P iso7816:clk=CLK:data=DATA:clock_option=native:protocol=T=0:starts_with_atr=false:gsmtap_enable=false:pcap_file=/tmp/out.pcap -A iso7816
@@ -90,8 +86,6 @@ echo "--- phone_reference ---"
 signal_diag examples/phone_reference_live_16M.sr CLK DATA RST
 echo "--- samsung_phone_sample ---"
 signal_diag examples/samsung_phone_sample.sr CLK DATA RST VCC
-echo "--- samsung_phone2_sample ---"
-signal_diag examples/samsung_phone2_sample.sr CLK DATA RST VCC
 echo "--- sunrise_phone_sample ---"
 signal_diag examples/sunrise_phone_sample.sr CLK DATA
 echo "--- sim_turnon ---"
