@@ -169,6 +169,53 @@ per ISO 7816-4 / 3GPP and must be accepted.  However, during test runs
 against the example traces, any CLA value other than `0x00` or `0x80` is
 an error flag indicating the decoder mis-framed the byte stream.
 
+#### ISO 7816 APDU constraints (reference — not enforced in decoder yet)
+
+These constraints can be used for APDU validation in future work.  They
+are not currently enforced by the decoder.
+
+##### T=0 Procedure Bytes
+
+| Byte | Meaning |
+|------|---------|
+| ACK (== INS or == ~INS) | Full data match: card acknowledges and expects all P3 data bytes |
+| INS^0x01 or ~INS^0x01 | Single-byte match: card validates syntax but processes data one byte at a time |
+| 0x60 | NULL: card busy, wait for next procedure byte |
+| 0x9E / 0x9F | Extended-length: next byte L = number of response data bytes, then SW |
+| SW1 (0x6x / 0x9x) | Status word: exchange complete |
+
+##### CLA (Class) Byte — Interindustry Structure
+
+```
+Bit:  8   7   6   5   4   3   2   1
+      b8  b7  b6  b5  SM  SM  ch  ch
+```
+
+- Bits 8–7: `00` or `01` for interindustry; `1x` reserved for proprietary
+- Bit 6: `0` for interindustry; `1` for proprietary structural formats
+- Bits 4–3: Secure Messaging indicator (`00` = no SM)
+- Bits 2–1: Logical channel (0–3 for interindustry)
+
+Valid interindustry CLA digits: `0x`, `1x`, `4x`, `5x`.
+
+Examples: `0x00` (standard), `0x0C` (secure messaging).
+
+##### INS (Instruction) Byte — Valid Ranges
+
+- Low nibble cannot be `X0` if high nibble is even
+- Low nibble cannot be `XF` under any circumstances
+- `0x6x` and `0x7x` ranges are invalid (reserved for SW1 / protocol bytes)
+
+Standard interindustry INS values: `A4` (SELECT), `B0` (READ BINARY),
+`D6` (UPDATE BINARY), `B2` (READ RECORD), `E2` (APPEND RECORD),
+`20` (VERIFY), `82` (EXTERNAL AUTHENTICATE), `88` (INTERNAL AUTHENTICATE).
+
+##### Quick Validation Checklist
+
+1. CLA high nibble is `0`, `1`, `4`, or `5` (for interindustry)
+2. INS low nibble is not `F`
+3. INS is outside `0x6x`–`0x7x` range
+
 **Current smoke-test status:**
 
 | Trace | ATR-included | mid-session | mid ≥ ATR? |
