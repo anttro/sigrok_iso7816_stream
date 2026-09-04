@@ -1,7 +1,7 @@
-=== Baseline captured 2026-09-04T22:29:36+03:00 ===
+=== Baseline captured 2026-09-04T23:57:48+03:00 ===
 
 === test_8 ATR-included ===
-('iso7816 decoder v1.1.3',)
+('iso7816 decoder v1.1.4',)
 ('Invalid TS byte 0x90 (pre-activation?), resyncing',)
 iso7816-1: Invalid TS byte 0x90 - skipped
 ('Invalid TS byte 0x00 (pre-activation?), resyncing',)
@@ -24,12 +24,12 @@ iso7816-1: Invalid TS byte 0x10 - skipped
 CHKSUM ERROR count: 28
 reader exchanges         : 37
 capture ATRs             : 2
-capture APDUs            : 38
-byte-exact matches (LCS) : 9
-reader exchanges not in capture (pre-capture / dropped): 28
+capture APDUs            : 54
+byte-exact matches (LCS) : 28
+reader exchanges not in capture (pre-capture / dropped): 9
 capture APDUs not in reader log:
-  - proactive/CAT (unlogged by reader SDK): 12
-  - valid exchanges (reader retries/dupes): 17
+  - proactive/CAT (unlogged by reader SDK): 17
+  - valid exchanges (reader retries/dupes): 9
   - GARBAGE (mis-framed/desync): 0
 
 Degradation metrics:
@@ -40,7 +40,7 @@ Degradation metrics:
 RESULT: OK - capture fully explained (reader + CAT + valid retries)
 
 === test_8 mid-session ===
-('iso7816 decoder v1.1.3',)
+('iso7816 decoder v1.1.4',)
 ('etu recovered (samples):', 1237)
 ('warm reset: re-arming ATR hunt',)
 ('Invalid TS byte 0x95 (pre-activation?), resyncing',)
@@ -63,12 +63,12 @@ iso7816-1: Invalid TS byte 0xff - skipped
 CHKSUM ERROR count: 38
 reader exchanges         : 37
 capture ATRs             : 2
-capture APDUs            : 38
-byte-exact matches (LCS) : 9
-reader exchanges not in capture (pre-capture / dropped): 28
+capture APDUs            : 54
+byte-exact matches (LCS) : 28
+reader exchanges not in capture (pre-capture / dropped): 9
 capture APDUs not in reader log:
-  - proactive/CAT (unlogged by reader SDK): 12
-  - valid exchanges (reader retries/dupes): 17
+  - proactive/CAT (unlogged by reader SDK): 17
+  - valid exchanges (reader retries/dupes): 9
   - GARBAGE (mis-framed/desync): 0
 
 Degradation metrics:
@@ -79,7 +79,7 @@ Degradation metrics:
 RESULT: OK - capture fully explained (reader + CAT + valid retries)
 
 === test_7 ATR-included ===
-('iso7816 decoder v1.1.3',)
+('iso7816 decoder v1.1.4',)
 ('warm reset: re-arming ATR hunt',)
 ('Invalid TS byte 0x07 (pre-activation?), resyncing',)
 iso7816-1: Invalid TS byte 0x07 - skipped
@@ -99,15 +99,15 @@ iso7816-1: Invalid TS byte 0x7a - skipped
 iso7816-1: CHKSUM ERROR bits=[0, 1, 1, 1, 1, 1, 1, 1, 1, 1]
 ('Invalid TS byte 0xff (pre-activation?), resyncing',)
 iso7816-1: Invalid TS byte 0xff - skipped
-CHKSUM ERROR count: 172
+CHKSUM ERROR count: 166
 reader exchanges         : 37
-capture ATRs             : 3
-capture APDUs            : 8
-byte-exact matches (LCS) : 0
-reader exchanges not in capture (pre-capture / dropped): 37
+capture ATRs             : 4
+capture APDUs            : 10
+byte-exact matches (LCS) : 10
+reader exchanges not in capture (pre-capture / dropped): 27
 capture APDUs not in reader log:
   - proactive/CAT (unlogged by reader SDK): 0
-  - valid exchanges (reader retries/dupes): 8
+  - valid exchanges (reader retries/dupes): 0
   - GARBAGE (mis-framed/desync): 0
 
 Degradation metrics:
@@ -118,7 +118,7 @@ Degradation metrics:
 RESULT: OK - capture fully explained (reader + CAT + valid retries)
 
 === test_7 mid-session ===
-('iso7816 decoder v1.1.3',)
+('iso7816 decoder v1.1.4',)
 ('warm reset: re-arming ATR hunt',)
 ('etu recovered (samples):', 1236)
 ('warm reset: re-arming ATR hunt',)
@@ -127,26 +127,26 @@ RESULT: OK - capture fully explained (reader + CAT + valid retries)
 iso7816-1: CHKSUM ERROR bits=[0, 1, 1, 1, 1, 1, 1, 1, 1, 1]
 (45636295, 'CHKSUM ERROR: ', 0, 'bits: ', [0, 1, 1, 1, 1, 1, 1, 1, 1, 1])
 iso7816-1: CHKSUM ERROR bits=[0, 1, 1, 1, 1, 1, 1, 1, 1, 1]
-('warm reset: re-arming ATR hunt',)
-(53286900, 'CHKSUM ERROR: ', 0, 'bits: ', [0, 1, 1, 1, 1, 1, 1, 1, 1, 1])
-iso7816-1: CHKSUM ERROR bits=[0, 1, 1, 1, 1, 1, 1, 1, 1, 1]
-(60259155, 'CHKSUM ERROR: ', 0, 'bits: ', [0, 1, 1, 1, 1, 1, 1, 1, 1, 1])
-iso7816-1: CHKSUM ERROR bits=[0, 1, 1, 1, 1, 1, 1, 1, 1, 1]
-(66497489, 'CHKSUM ERROR: ', 0, 'bits: ', [0, 1, 1, 0, 0, 1, 0, 0, 0, 0])
-iso7816-1: CHKSUM ERROR bits=[0, 1, 1, 0, 0, 1, 0, 0, 0, 0]
-(66510162, 'CHKSUM ERROR: ', 0, 'bits: ', [0, 1, 0, 1, 1, 1, 0, 0, 0, 1])
-iso7816-1: CHKSUM ERROR bits=[0, 1, 0, 1, 1, 1, 0, 0, 0, 1]
-(67489780, 'CHKSUM ERROR: ', 0, 'bits: ', [0, 1, 1, 1, 1, 1, 1, 1, 1, 1])
-iso7816-1: CHKSUM ERROR bits=[0, 1, 1, 1, 1, 1, 1, 1, 1, 1]
-CHKSUM ERROR count: 168
+('Invalid TS byte 0x9f (pre-activation?), resyncing',)
+iso7816-1: Invalid TS byte 0x9f - skipped
+('Invalid TS byte 0x95 (pre-activation?), resyncing',)
+iso7816-1: Invalid TS byte 0x95 - skipped
+('Invalid TS byte 0x80 (pre-activation?), resyncing',)
+iso7816-1: Invalid TS byte 0x80 - skipped
+('Invalid TS byte 0x1f (pre-activation?), resyncing',)
+iso7816-1: Invalid TS byte 0x1f - skipped
+('Invalid TS byte 0xc7 (pre-activation?), resyncing',)
+iso7816-1: Invalid TS byte 0xc7 - skipped
+('Invalid TS byte 0x80 (pre-activation?), resyncing',)
+CHKSUM ERROR count: 162
 reader exchanges         : 37
-capture ATRs             : 3
-capture APDUs            : 8
-byte-exact matches (LCS) : 0
-reader exchanges not in capture (pre-capture / dropped): 37
+capture ATRs             : 4
+capture APDUs            : 10
+byte-exact matches (LCS) : 10
+reader exchanges not in capture (pre-capture / dropped): 27
 capture APDUs not in reader log:
   - proactive/CAT (unlogged by reader SDK): 0
-  - valid exchanges (reader retries/dupes): 8
+  - valid exchanges (reader retries/dupes): 0
   - GARBAGE (mis-framed/desync): 0
 
 Degradation metrics:
@@ -157,7 +157,7 @@ Degradation metrics:
 RESULT: OK - capture fully explained (reader + CAT + valid retries)
 
 === phone_reference ATR-included ===
-('iso7816 decoder v1.1.3',)
+('iso7816 decoder v1.1.4',)
 ('Invalid TS byte 0xf4 (pre-activation?), resyncing',)
 iso7816-1: Invalid TS byte 0xf4 - skipped
 (11685168, 'CHKSUM ERROR: ', 0, 'bits: ', [0, 1, 1, 1, 1, 1, 1, 1, 1, 1])
@@ -196,7 +196,7 @@ Degradation metrics:
 RESULT: OK - capture fully explained (reader + CAT + valid retries)
 
 === phone_reference mid-session ===
-('iso7816 decoder v1.1.3',)
+('iso7816 decoder v1.1.4',)
 ('etu recovered (samples):', 53)
 (11673977, 'CHKSUM ERROR: ', 0, 'bits: ', [0, 0, 0, 1, 0, 0, 1, 1, 1, 1])
 iso7816-1: CHKSUM ERROR bits=[0, 0, 0, 1, 0, 0, 1, 1, 1, 1]
@@ -219,24 +219,23 @@ iso7816-1: CHKSUM ERROR bits=[0, 0, 1, 0, 0, 0, 0, 0, 0, 0]
 CHKSUM ERROR count: 10140
 reader exchanges         : 0
 capture ATRs             : 0
-capture APDUs            : 224
+capture APDUs            : 620
 byte-exact matches (LCS) : 0
 reader exchanges not in capture (pre-capture / dropped): 0
 capture APDUs not in reader log:
-  - proactive/CAT (unlogged by reader SDK): 5
-  - valid exchanges (reader retries/dupes): 219
+  - proactive/CAT (unlogged by reader SDK): 18
+  - valid exchanges (reader retries/dupes): 602
   - GARBAGE (mis-framed/desync): 0
 
 Degradation metrics:
-  - BAD_FCS (desynced by decoder): 2
-    in GARBAGE: 0, in retries: 2, in CAT: 0, in matched: 0
+  - BAD_FCS (desynced by decoder): 0
   - payload mismatches (LCS-matched, bytes differ): 0
   - suspicious CLA: 0
 
 RESULT: OK - capture fully explained (reader + CAT + valid retries)
 
 === samsung_phone_sample ATR-included ===
-('iso7816 decoder v1.1.3',)
+('iso7816 decoder v1.1.4',)
 (3125821, 'CHKSUM ERROR: ', 0, 'bits: ', [0, 0, 0, 1, 1, 1, 1, 1, 1, 1])
 iso7816-1: CHKSUM ERROR bits=[0, 0, 0, 1, 1, 1, 1, 1, 1, 1]
 ('Invalid TS byte 0xfc (pre-activation?), resyncing',)
@@ -275,7 +274,7 @@ Degradation metrics:
 RESULT: OK - capture fully explained (reader + CAT + valid retries)
 
 === samsung_phone_sample mid-session ===
-('iso7816 decoder v1.1.3',)
+('iso7816 decoder v1.1.4',)
 ('etu recovered (samples):', 72)
 (3272987, 'CHKSUM ERROR: ', 0, 'bits: ', [0, 0, 1, 1, 1, 1, 1, 1, 1, 0])
 iso7816-1: CHKSUM ERROR bits=[0, 0, 1, 1, 1, 1, 1, 1, 1, 0]
@@ -298,12 +297,39 @@ iso7816-1: CHKSUM ERROR bits=[0, 0, 1, 0, 1, 1, 1, 1, 1, 1]
 CHKSUM ERROR count: 1514
 reader exchanges         : 0
 capture ATRs             : 1
-capture APDUs            : 39
+capture APDUs            : 49
 byte-exact matches (LCS) : 0
 reader exchanges not in capture (pre-capture / dropped): 0
 capture APDUs not in reader log:
   - proactive/CAT (unlogged by reader SDK): 0
-  - valid exchanges (reader retries/dupes): 39
+  - valid exchanges (reader retries/dupes): 44
+  - GARBAGE (mis-framed/desync): 5
+      GARBAGE: 00a41f04026f38ff61
+      GARBAGE: 00a40004026f07ff61
+      GARBAGE: 00a40004026f78ff61
+      GARBAGE: 00a4000402ff6fdfff
+      GARBAGE: 00a40004026fe3ff61
+
+Degradation metrics:
+  - BAD_FCS (desynced by decoder): 6
+    in GARBAGE: 5, in retries: 1, in CAT: 0, in matched: 0
+  - payload mismatches (LCS-matched, bytes differ): 0
+  - suspicious CLA: 0
+
+RESULT: UNCLEAN - 5 mis-framed capture APDU(s)
+
+=== sunrise_phone_sample ATR-included ===
+('iso7816 decoder v1.1.4',)
+('ENDATR', b'3b9f96801fc68031e073fe211b644127910082900037')
+CHKSUM ERROR count: 0
+reader exchanges         : 0
+capture ATRs             : 1
+capture APDUs            : 1077
+byte-exact matches (LCS) : 0
+reader exchanges not in capture (pre-capture / dropped): 0
+capture APDUs not in reader log:
+  - proactive/CAT (unlogged by reader SDK): 5
+  - valid exchanges (reader retries/dupes): 1072
   - GARBAGE (mis-framed/desync): 0
 
 Degradation metrics:
@@ -313,36 +339,8 @@ Degradation metrics:
 
 RESULT: OK - capture fully explained (reader + CAT + valid retries)
 
-=== sunrise_phone_sample ATR-included ===
-('iso7816 decoder v1.1.3',)
-('ENDATR', b'3b9f96801fc68031e073fe211b644127910082900037')
-iso7816-1: desynced APDU (flagged BAD_FCS)
-iso7816-1: desynced APDU (flagged BAD_FCS)
-iso7816-1: desynced APDU (flagged BAD_FCS)
-iso7816-1: desynced APDU (flagged BAD_FCS)
-iso7816-1: desynced APDU (flagged BAD_FCS)
-iso7816-1: desynced APDU (flagged BAD_FCS)
-CHKSUM ERROR count: 0
-reader exchanges         : 0
-capture ATRs             : 1
-capture APDUs            : 711
-byte-exact matches (LCS) : 0
-reader exchanges not in capture (pre-capture / dropped): 0
-capture APDUs not in reader log:
-  - proactive/CAT (unlogged by reader SDK): 0
-  - valid exchanges (reader retries/dupes): 711
-  - GARBAGE (mis-framed/desync): 0
-
-Degradation metrics:
-  - BAD_FCS (desynced by decoder): 6
-    in GARBAGE: 0, in retries: 6, in CAT: 0, in matched: 0
-  - payload mismatches (LCS-matched, bytes differ): 0
-  - suspicious CLA: 0
-
-RESULT: OK - capture fully explained (reader + CAT + valid retries)
-
 === sunrise_phone_sample mid-session ===
-('iso7816 decoder v1.1.3',)
+('iso7816 decoder v1.1.4',)
 ('etu recovered (samples):', 5723)
 (88911990, 'CHKSUM ERROR: ', 0, 'bits: ', [0, 0, 1, 0, 1, 1, 0, 0, 1, 1])
 iso7816-1: CHKSUM ERROR bits=[0, 0, 1, 0, 1, 1, 0, 0, 1, 1]
@@ -381,32 +379,28 @@ Degradation metrics:
 RESULT: OK - capture fully explained (reader + CAT + valid retries)
 
 === sim_turnon ATR-included ===
-('iso7816 decoder v1.1.3',)
+('iso7816 decoder v1.1.4',)
 ('ENDATR', b'3b9f96801fc78031e073fe211163444d2183079000e2')
-iso7816-1: desynced APDU (flagged BAD_FCS)
-iso7816-1: desynced APDU (flagged BAD_FCS)
-iso7816-1: desynced APDU (flagged BAD_FCS)
 CHKSUM ERROR count: 0
 reader exchanges         : 0
 capture ATRs             : 1
-capture APDUs            : 878
+capture APDUs            : 1390
 byte-exact matches (LCS) : 0
 reader exchanges not in capture (pre-capture / dropped): 0
 capture APDUs not in reader log:
-  - proactive/CAT (unlogged by reader SDK): 2
-  - valid exchanges (reader retries/dupes): 876
+  - proactive/CAT (unlogged by reader SDK): 5
+  - valid exchanges (reader retries/dupes): 1385
   - GARBAGE (mis-framed/desync): 0
 
 Degradation metrics:
-  - BAD_FCS (desynced by decoder): 3
-    in GARBAGE: 0, in retries: 3, in CAT: 0, in matched: 0
+  - BAD_FCS (desynced by decoder): 0
   - payload mismatches (LCS-matched, bytes differ): 0
   - suspicious CLA: 0
 
 RESULT: OK - capture fully explained (reader + CAT + valid retries)
 
 === sim_turnon mid-session ===
-('iso7816 decoder v1.1.3',)
+('iso7816 decoder v1.1.4',)
 ('etu recovered (samples):', 2855)
 (108117240, 'CHKSUM ERROR: ', 0, 'bits: ', [0, 0, 1, 0, 1, 1, 0, 0, 1, 1])
 iso7816-1: CHKSUM ERROR bits=[0, 0, 1, 0, 1, 1, 0, 0, 1, 1]
@@ -429,22 +423,23 @@ iso7816-1: CHKSUM ERROR bits=[0, 1, 0, 1, 1, 0, 1, 1, 1, 1]
 CHKSUM ERROR count: 5044
 reader exchanges         : 0
 capture ATRs             : 0
-capture APDUs            : 10
+capture APDUs            : 9
 byte-exact matches (LCS) : 0
 reader exchanges not in capture (pre-capture / dropped): 0
 capture APDUs not in reader log:
   - proactive/CAT (unlogged by reader SDK): 0
-  - valid exchanges (reader retries/dupes): 9
-  - GARBAGE (mis-framed/desync): 1
+  - valid exchanges (reader retries/dupes): 7
+  - GARBAGE (mis-framed/desync): 2
+      GARBAGE: 00feedc2feedeefeedeafeec00feecffe797edeafeedeafeec00feecffe797edeafeecc0fefc80e7e7e7e7e7e7e767edfafeec00feecffe797edfafeecc2f9feece6edfafeec00feecffe797edfafeecc2f9feec41fbedfafeec08feecffe797edeafeecc2f9feec02feedfafeecc2f9feec83feedfefeecc2f9feecf2edf2feecc0feec3efeedfafeecc0feec4cfbedfefeecc2f9fefc4080808080808080808088808480808080feec41feedfefeecc0feecc0ecfeec02e7e6feedeefeedeafeecc0f9feece7edfafeedeafeedeafeec82f9feedfafeec08feec18e7e7fdedfefeec8af9feedfafeec0af9feedfafeec00feec18e7e7fdedfafeec02f9feedfafeec0af9
       GARBAGE: 000667f9e7e7e7e7e7e7e7e7e7e767ec100083e7e7e7e7e7e7e7e7e7e7e7e797ec1820e7e7e7e7e7e7e7e7e7e7e7e727ec1800eae7e7e7e7e7e7e7e7e7e7e7e7e7cfedf6feec08feedeafeec0af9feec03ffe727edf6feec00feec52feedeafeec0af9feecffe7e7e7fbedf6feec80feedeafeec02f9feecffe7e7e7fbedf6feec88e6edfefeec00feedfafeec80e4edfafeec88e4edfafeec00feedfafeec08feedfafeec80feedfefeec80feedfefeec08feedfefeec00feedfafeec80e4ece4ece4edfafeec02e7e6feece23dccffec9d95dcf2edf6feec80e4ece4ece4ece4ece4ece4ece4ece4ece4ece4ece4ece4ece4ece4ece4ece4ece4ece4ece4ece4ece4ece4ece4ece4ece4ece4ece4ece4ece4ece4ece4ece4ece4ece4ece4ece4ece4ece4ece4ece4ece4ece4ece4ece4ece4ece4ece4ece4ece4ece4ece4ece4ece4ece4ece4ece4ece4ece4ece4ece4ece4ece4ece4ece4ece4ece4ece4ece4ece4ece4ece4ece4ece4ece4ece4ece4ece4ece4ece4ece4ece4ece4ece4ece4ece4ece4ece4ece4ece4ece4ece4ece4ece4ece4ece4ece4ece4ece4ece4ece4ece4ece4ece4ece4ece4ece4ece4ece4ece4ece4ece4ece4ece4ece4ece4ece4edfafeecc2f9feedc2feedfefeedf6feec80e4ece4ece4ece4ece4ece4ece4ece4ece4ece4ece4ece4ece4ece4ece4ece4ece4ece4ece4ece4ece4ece4ece4ece4ece4ece4ece4ece4ece4ece4ece4ece4ece4ece4ece4ece4ece4ece4ece4ece4ece4ece4ece4ece4ece4edf2feecc0feedc6feedfafeecc0feedc27dedfeedf6feec88e4ece4ece4ece4ece4ece4ece4ece4ece4ece4ece4ece4ece4ece4ece4ece4ece4ece4ece4ece4ece4ece4ece4ece4ece4ece4ece4ece4ece4ece4ece4ece4ece4ece4ece4ece4ece4ece4ece4ece4ece4ece4ece4ece4ece4ece4ece4ece4ece4ece4ece4ece4ece4ece4ece4ece4ece4ece4ece4ece4ece4ece4ece4ece4ece4ece4ece4ece4ece4ece4ece4ece4ece4ece4ece4ece4ece4ece4ece4ece4ece4ece4ece4ece4
 
 Degradation metrics:
-  - BAD_FCS (desynced by decoder): 4
-    in GARBAGE: 1, in retries: 3, in CAT: 0, in matched: 0
+  - BAD_FCS (desynced by decoder): 5
+    in GARBAGE: 2, in retries: 3, in CAT: 0, in matched: 0
   - payload mismatches (LCS-matched, bytes differ): 0
   - suspicious CLA: 0
 
-RESULT: UNCLEAN - 1 mis-framed capture APDU(s)
+RESULT: UNCLEAN - 2 mis-framed capture APDU(s)
 
 === signal diagnostics ===
 --- test_8 ---
@@ -505,6 +500,6 @@ test_build_packet_plain_res_zero (__main__.TestGsmtapFlags.test_build_packet_pla
 test_flag_constant_value (__main__.TestGsmtapFlags.test_flag_constant_value) ... ok
 
 ----------------------------------------------------------------------
-Ran 12 tests in 0.009s
+Ran 12 tests in 0.011s
 
 OK
