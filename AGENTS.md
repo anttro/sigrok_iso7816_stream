@@ -14,7 +14,7 @@ reader logs.
 | `test_7_raw16.sr` | CLK | DATA | RST | VCC | ATR |
 | `phone_reference_live_16M.sr` | CLK | DATA | RST | — | mid-session, gated CLK |
 | `samsung_phone_sample.sr` | CLK | DATA | RST | VCC | mid-session, gated CLK, F=512/D=32 |
-| `samsung_phone2_sample.sr` | CLK | DATA | RST | VCC | mid-session, gated CLK |
+
 | `sunrise_phone_sample.sr` | CLK | DATA | — | — | mid-session, gated CLK |
 | `sim_turnon_2_clicking_around_ds.sr` | CLK | DATA | — | — | SIM power-on, gated CLK |
 
@@ -63,16 +63,6 @@ sigrok-cli -i examples/samsung_phone_sample.sr \
   -P iso7816:clk=CLK:data=DATA:rst=RST:vcc=VCC:clock_option=native:protocol=T=0:starts_with_atr=false:gsmtap_enable=false:pcap_file=/tmp/out.pcap \
   -A iso7816 >/dev/null
 
-# --- samsung phone 2 (ATR-included, gated CLK, non-default F/D) ---
-sigrok-cli -i examples/samsung_phone2_sample.sr \
-  -P iso7816:clk=CLK:data=DATA:rst=RST:vcc=VCC:clock_option=native:protocol=T=0:starts_with_atr=true:gsmtap_enable=false:pcap_file=/tmp/out.pcap \
-  -A iso7816 >/dev/null
-
-# --- samsung phone 2 (mid-session, gated CLK, non-default F/D) ---
-sigrok-cli -i examples/samsung_phone2_sample.sr \
-  -P iso7816:clk=CLK:data=DATA:rst=RST:vcc=VCC:clock_option=native:protocol=T=0:starts_with_atr=false:gsmtap_enable=false:pcap_file=/tmp/out.pcap \
-  -A iso7816 >/dev/null
-
 # --- sunrise phone (ATR-included, gated CLK, 2-channel capture) ---
 sigrok-cli -i examples/sunrise_phone_sample.sr \
   -P iso7816:clk=CLK:data=DATA:clock_option=native:protocol=T=0:starts_with_atr=true:gsmtap_enable=false:pcap_file=/tmp/out.pcap \
@@ -104,27 +94,70 @@ find . -name "__pycache__" -type d -exec rm -rf {} +
 ```
 
 The acceptance criteria are:
-- **>0 capture APDUs** when a reader log is present (catches vacuous passes
-  where the pcap contains no APDUs at all).
-- For reader-log traces (`test_8`, `test_7`): `RESULT: OK` and **0 garbage**.
-- For smoke-test traces (phone/samsung/sunrise/sim_turnon): **>0 APDUs**
-  in at least one of the two modes.
-- No increase in `CHKSUM ERROR`, `BAD_FCS`, payload mismatches, or suspicious
-  CLA counts.
-- All traces must be tested in **both modes** (ATR-included and mid-session)
-  to verify the decoder works correctly regardless of user setting.
 
-**Current status (v1.1.3, channel-name fix):**
+**The decoder is NOT considered fully functional until ALL of these criteria are met.**
 
-| Trace | ATR-included APDUs | mid-session APDUs | Notes |
-|-------|-------------------:|------------------:|-------|
-| `test_8_raw16` | 38 | 38 | both modes work |
-| `test_7_raw16` | 8 | 8 | both modes work |
-| `phone_reference_live_16M` | 0 | 224 | ATR-included: no ATR in capture (gated CLK), mid-session works |
-| `samsung_phone_sample` | 2 | 39 | ATR-included finds ATR, mid-session finds ATR + 39 APDUs |
-| `samsung_phone2_sample` | 0 | 0 | gated CLK, non-default F/D; no ATR in trace |
-| `sunrise_phone_sample` | 711 | 1 | ATR-included works; mid-session: 1 APDU |
-| `sim_turnon_2_clicking_around_ds` | 878 | 10 | ATR-included: 878 APDUs; mid-session: 10 (1 mis-framed) |
+#### Ground truth
+
+`test_7_reader.log` and `test_8_reader.log` are **trusted, complete APDU logs**
+captured by the PC/SC reader SDK during the same recording session as the
+sigrok trace.  They contain every command the reader sent and every response
+the card returned.  They are the authoritative reference — the decoder output
+must match them.
+
+#### Success criteria (all must pass)
+
+1. **test_8 and test_7 (reader-log traces):**
+   - **Every reader exchange must appear in the decoder output.**  Currently
+     only 9 of 37 reader exchanges match (`RESULT: OK` hides this).  The
+     decoder must produce byte-identical APDUs for all reader exchanges.
+   - **0 garbage APDUs** in both ATR-included and mid-session modes.
+   - **`RESULT: OK`** from `vs_reader.py`.
+
+2. **All traces (including smoke-test):**
+   - **mid-session APDUs ≥ ATR-included APDUs.**  Mid-session mode starts
+     earlier (no ATR wait) so it must find at least as many APDUs.
+   - **>0 APDUs** in at least one mode for smoke-test traces.
+   - No increase in `CHKSUM ERROR`, `BAD_FCS`, payload mismatches, or
+     suspicious CLA counts.
+
+3. **Both modes must be tested** (ATR-included and mid-session) for every
+   trace, to verify the decoder works regardless of user setting.
+
+#### Known issues (must be fixed to meet criteria)
+
+**T=0 framing produces incorrect APDUs.**  The decoder's output does not
+match the reader log format:
+
+- **SELECT + GET RESPONSE grouped into one APDU.**  The reader log has
+  these as separate TPDUs (e.g. `00a40004023f006125` then
+  `00c0000025 622382...9000`).  The decoder concatenates them and adds
+  extra bytes (`6060` prefix on SELECT, truncated GET RESPONSE data).
+
+- **test_7 severely mis-framed.**  37 reader entries vs 8 garbled capture
+  APDUs.  The decoder produces corrupted byte sequences that don't match
+  any reader exchange.
+
+- **test_8 partially working.**  38 capture APDUs vs 37 reader entries,
+  but only 9 byte-exact matches.  The decoder finds all exchanges but
+  groups them incorrectly.
+
+**Root cause:** The ATR-based T=0 procedure-byte loop (non-`_edge_read`
+path, lines 1898–1941) accumulates bytes into `packet` but the grouping
+logic does not match the reader's TPDU boundaries.  The packet emitted
+per exchange contains merged command+response data in a format that
+`vs_reader.py` cannot match against the reader log.
+
+**Current smoke-test status:**
+
+| Trace | ATR-included | mid-session | mid ≥ ATR? |
+|-------|-------------|-------------|------------|
+| test_8 | 38 | 38 | ✓ |
+| test_7 | 8 | 8 | ✓ |
+| phone_reference | 0 | 224 | ✓ |
+| samsung_phone | 2 | 39 | ✓ |
+| sunrise_phone | **711** | **1** | **✗** |
+| sim_turnon | **878** | **10** | **✗** |
 
 **Note on v1.1.3 fix:** The decoder measures CLK period as an average instead of using the minimum recurring period. This correctly handles traces where CLK periods alternate (e.g., 4,3,3 pattern for ~5.33MHz CLK at 16MHz sample rate). The fix changed `_measure_clock_period()` to use `sum(spacings) / len(spacings)` instead of `_robust_min(spacings)`, giving accurate `spc` values like 3.333... instead of 3. This corrected the `_wait_clk_rising()` skip calculation, fixing the post-ATR byte alignment issue.
 
@@ -286,9 +319,9 @@ from **counting real CLK edges**, not from a sample-count estimate.
 
 ### Testing
 
-- `test_8` / `test_7`: 0 garbage in both ATR-included and mid-session modes.
-- All other traces: no regressions (smoke test).
-- Unit tests: 12/12 pass.
+- `test_8` / `test_7`: **NOT YET PASSING.** 0 garbage, but decoder output
+  does not match reader log (T=0 framing groups exchanges incorrectly).
+  See success criteria above.
 
 ## Mid-session phone decode (legacy note, still applies)
 
@@ -424,9 +457,6 @@ discarded ideas.  "Proven" = kept in `pd.py`; "Rejected" = do not re-add.
 
 - Mid-session captures that begin inside an exchange cannot frame the first
   command perfectly (expected; the rest of the stream is clean).
-- **Samsung phones — gated CLK, non-default F/D** (`samsung_phone_sample.sr`,
-  `samsung_phone2_sample.sr`).  Samsung1 uses F=512/D=32 (16 CLK cycles/bit);
-  Samsung2 uses a different rate (~102-111 sample ETU).  `_measure_etu`
-  now correctly measures the ETU from DATA edge spacings (after glitch
-  filtering), but the first burst may start at a noisy position, producing
-  wrong measurements.  Smoke-test only.
+- **Samsung phone — gated CLK, non-default F/D** (`samsung_phone_sample.sr`).
+  Uses F=512/D=32 (16 CLK cycles/bit).  `_measure_etu` correctly measures
+  the ETU from DATA edge spacings (after glitch filtering).  Smoke-test only.
