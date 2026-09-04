@@ -182,11 +182,12 @@ The edge-read path had two bugs:
 
 All example traces (`test_7`, `test_8`, `phone_reference`, `samsung`,
 `sunrise`, `sim_turnon`) contain only CLA `0x00` (interindustry) and
-`0x80` (USIM/CAT).  The decoder must **not** mandate specific CLA values —
-other CLA values (e.g. `0x04`, `0x08`, `0x84`, `0xA0`, `0xB0`) are valid
-per ISO 7816-4 / 3GPP and must be accepted.  However, during test runs
-against the example traces, any CLA value other than `0x00` or `0x80` is
-an error flag indicating the decoder mis-framed the byte stream.
+`0x8x` (USIM/CAT, mostly `0x80` with occasional `0x81` for logical channel 1).
+The decoder must **not** mandate specific CLA values — other CLA values
+(e.g. `0x04`, `0x08`, `0x84`, `0xA0`, `0xB0`) are valid per ISO 7816-4 / 3GPP
+and must be accepted.  However, during test runs against the example traces,
+any CLA value outside `0x00-0x0F` and `0x80-0x8F` is an error flag indicating
+the decoder mis-framed the byte stream.
 
 #### ISO 7816 APDU constraints (reference — not enforced in decoder yet)
 
