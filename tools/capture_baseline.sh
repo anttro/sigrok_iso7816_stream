@@ -36,36 +36,66 @@ run_test() {
     echo ""
 }
 
+# Signal diagnostic: extract key metrics from .sr trace
+signal_diag() {
+    local sr_file="$1"
+    local clk="$2"
+    local data="$3"
+    local rst_opt=""
+    local vcc_opt=""
+    [ -n "$4" ] && rst_opt="--rst $4"
+    [ -n "$5" ] && vcc_opt="--vcc $5"
+    python3 tools/signal_diagnostic.py "$sr_file" --clk "$clk" --data "$data" $rst_opt $vcc_opt 2>&1 \
+        | grep -E 'Frequency|Period|Rising|Transitions|First activity|stable|noisy' | head -10
+}
+
 echo "=== Baseline captured $(date -Iseconds) ==="
 echo ""
 
 # test_8
-run_test "test_8 ATR-included" sigrok-cli -i examples/test_8_raw16.sr -P iso7816:clk=D1:data=D6:rst=D0:clock_option=native:rst_detect=true:starts_with_atr=true:gsmtap_enable=false:pcap_file=/tmp/out.pcap -A iso7816
-run_test "test_8 mid-session" sigrok-cli -i examples/test_8_raw16.sr -P iso7816:clk=D1:data=D6:rst=D0:clock_option=native:rst_detect=true:starts_with_atr=false:gsmtap_enable=false:pcap_file=/tmp/out.pcap -A iso7816
+run_test "test_8 ATR-included" sigrok-cli -i examples/test_8_raw16.sr -P iso7816:clk=CLK:data=DATA:rst=RST:vcc=VCC:clock_option=native:rst_detect=true:starts_with_atr=true:gsmtap_enable=false:pcap_file=/tmp/out.pcap -A iso7816
+run_test "test_8 mid-session" sigrok-cli -i examples/test_8_raw16.sr -P iso7816:clk=CLK:data=DATA:rst=RST:vcc=VCC:clock_option=native:rst_detect=true:starts_with_atr=false:gsmtap_enable=false:pcap_file=/tmp/out.pcap -A iso7816
 
 # test_7
-run_test "test_7 ATR-included" sigrok-cli -i examples/test_7_raw16.sr -P iso7816:clk=D1:data=D6:rst=D0:clock_option=native:rst_detect=true:starts_with_atr=true:gsmtap_enable=false:pcap_file=/tmp/out.pcap -A iso7816
-run_test "test_7 mid-session" sigrok-cli -i examples/test_7_raw16.sr -P iso7816:clk=D1:data=D6:rst=D0:clock_option=native:rst_detect=true:starts_with_atr=false:gsmtap_enable=false:pcap_file=/tmp/out.pcap -A iso7816
+run_test "test_7 ATR-included" sigrok-cli -i examples/test_7_raw16.sr -P iso7816:clk=CLK:data=DATA:rst=RST:vcc=VCC:clock_option=native:rst_detect=true:starts_with_atr=true:gsmtap_enable=false:pcap_file=/tmp/out.pcap -A iso7816
+run_test "test_7 mid-session" sigrok-cli -i examples/test_7_raw16.sr -P iso7816:clk=CLK:data=DATA:rst=RST:vcc=VCC:clock_option=native:rst_detect=true:starts_with_atr=false:gsmtap_enable=false:pcap_file=/tmp/out.pcap -A iso7816
 
 # phone_reference
-run_test "phone_reference ATR-included" timeout 30 sigrok-cli -i examples/phone_reference_live_16M.sr -P iso7816:clk=D1:data=D6:rst=D0:clock_option=native:rst_detect=true:protocol=T=0:starts_with_atr=true:gsmtap_enable=false:pcap_file=/tmp/out.pcap -A iso7816
-run_test "phone_reference mid-session" timeout 30 sigrok-cli -i examples/phone_reference_live_16M.sr -P iso7816:clk=D1:data=D6:rst=D0:clock_option=native:rst_detect=true:protocol=T=0:starts_with_atr=false:gsmtap_enable=false:pcap_file=/tmp/out.pcap -A iso7816
+run_test "phone_reference ATR-included" timeout 30 sigrok-cli -i examples/phone_reference_live_16M.sr -P iso7816:clk=CLK:data=DATA:rst=RST:clock_option=native:protocol=T=0:starts_with_atr=true:gsmtap_enable=false:pcap_file=/tmp/out.pcap -A iso7816
+run_test "phone_reference mid-session" timeout 30 sigrok-cli -i examples/phone_reference_live_16M.sr -P iso7816:clk=CLK:data=DATA:rst=RST:clock_option=native:protocol=T=0:starts_with_atr=false:gsmtap_enable=false:pcap_file=/tmp/out.pcap -A iso7816
 
 # samsung_phone_sample
-run_test "samsung_phone_sample ATR-included" timeout 30 sigrok-cli -i examples/samsung_phone_sample.sr -P iso7816:clk=D1:data=D6:rst=D0:clock_option=native:rst_detect=true:protocol=T=0:starts_with_atr=true:gsmtap_enable=false:pcap_file=/tmp/out.pcap -A iso7816
-run_test "samsung_phone_sample mid-session" timeout 30 sigrok-cli -i examples/samsung_phone_sample.sr -P iso7816:clk=D1:data=D6:rst=D0:clock_option=native:rst_detect=true:protocol=T=0:starts_with_atr=false:gsmtap_enable=false:pcap_file=/tmp/out.pcap -A iso7816
+run_test "samsung_phone_sample ATR-included" timeout 30 sigrok-cli -i examples/samsung_phone_sample.sr -P iso7816:clk=CLK:data=DATA:rst=RST:vcc=VCC:clock_option=native:protocol=T=0:starts_with_atr=true:gsmtap_enable=false:pcap_file=/tmp/out.pcap -A iso7816
+run_test "samsung_phone_sample mid-session" timeout 30 sigrok-cli -i examples/samsung_phone_sample.sr -P iso7816:clk=CLK:data=DATA:rst=RST:vcc=VCC:clock_option=native:protocol=T=0:starts_with_atr=false:gsmtap_enable=false:pcap_file=/tmp/out.pcap -A iso7816
 
 # samsung_phone2_sample
-run_test "samsung_phone2_sample ATR-included" timeout 30 sigrok-cli -i examples/samsung_phone2_sample.sr -P iso7816:clk=D1:data=D6:rst=D0:clock_option=native:rst_detect=true:protocol=T=0:starts_with_atr=true:gsmtap_enable=false:pcap_file=/tmp/out.pcap -A iso7816
-run_test "samsung_phone2_sample mid-session" timeout 30 sigrok-cli -i examples/samsung_phone2_sample.sr -P iso7816:clk=D1:data=D6:rst=D0:clock_option=native:rst_detect=true:protocol=T=0:starts_with_atr=false:gsmtap_enable=false:pcap_file=/tmp/out.pcap -A iso7816
+run_test "samsung_phone2_sample ATR-included" timeout 30 sigrok-cli -i examples/samsung_phone2_sample.sr -P iso7816:clk=CLK:data=DATA:rst=RST:vcc=VCC:clock_option=native:protocol=T=0:starts_with_atr=true:gsmtap_enable=false:pcap_file=/tmp/out.pcap -A iso7816
+run_test "samsung_phone2_sample mid-session" timeout 30 sigrok-cli -i examples/samsung_phone2_sample.sr -P iso7816:clk=CLK:data=DATA:rst=RST:vcc=VCC:clock_option=native:protocol=T=0:starts_with_atr=false:gsmtap_enable=false:pcap_file=/tmp/out.pcap -A iso7816
 
 # sunrise_phone_sample
-run_test "sunrise_phone_sample ATR-included" timeout 30 sigrok-cli -i examples/sunrise_phone_sample.sr -P iso7816:clk=D0:data=D1:clock_option=native:protocol=T=0:starts_with_atr=true:gsmtap_enable=false:pcap_file=/tmp/out.pcap -A iso7816
-run_test "sunrise_phone_sample mid-session" timeout 30 sigrok-cli -i examples/sunrise_phone_sample.sr -P iso7816:clk=D0:data=D1:clock_option=native:protocol=T=0:starts_with_atr=false:gsmtap_enable=false:pcap_file=/tmp/out.pcap -A iso7816
+run_test "sunrise_phone_sample ATR-included" timeout 30 sigrok-cli -i examples/sunrise_phone_sample.sr -P iso7816:clk=CLK:data=DATA:clock_option=native:protocol=T=0:starts_with_atr=true:gsmtap_enable=false:pcap_file=/tmp/out.pcap -A iso7816
+run_test "sunrise_phone_sample mid-session" timeout 30 sigrok-cli -i examples/sunrise_phone_sample.sr -P iso7816:clk=CLK:data=DATA:clock_option=native:protocol=T=0:starts_with_atr=false:gsmtap_enable=false:pcap_file=/tmp/out.pcap -A iso7816
 
 # sim_turnon
-run_test "sim_turnon ATR-included" timeout 60 sigrok-cli -i examples/sim_turnon_2_clicking_around_ds.sr -P iso7816:clk=1:data=0:clock_option=native:rst_detect=true:protocol=T=0:starts_with_atr=true:gsmtap_enable=false:pcap_file=/tmp/out.pcap -A iso7816
-run_test "sim_turnon mid-session" timeout 60 sigrok-cli -i examples/sim_turnon_2_clicking_around_ds.sr -P iso7816:clk=1:data=0:clock_option=native:rst_detect=true:protocol=T=0:starts_with_atr=false:gsmtap_enable=false:pcap_file=/tmp/out.pcap -A iso7816
+run_test "sim_turnon ATR-included" timeout 60 sigrok-cli -i examples/sim_turnon_2_clicking_around_ds.sr -P iso7816:clk=CLK:data=DATA:clock_option=native:rst_detect=true:protocol=T=0:starts_with_atr=true:gsmtap_enable=false:pcap_file=/tmp/out.pcap -A iso7816
+run_test "sim_turnon mid-session" timeout 60 sigrok-cli -i examples/sim_turnon_2_clicking_around_ds.sr -P iso7816:clk=CLK:data=DATA:clock_option=native:rst_detect=true:protocol=T=0:starts_with_atr=false:gsmtap_enable=false:pcap_file=/tmp/out.pcap -A iso7816
+
+# signal diagnostics
+echo "=== signal diagnostics ==="
+echo "--- test_8 ---"
+signal_diag examples/test_8_raw16.sr CLK DATA RST VCC
+echo "--- test_7 ---"
+signal_diag examples/test_7_raw16.sr CLK DATA RST VCC
+echo "--- phone_reference ---"
+signal_diag examples/phone_reference_live_16M.sr CLK DATA RST
+echo "--- samsung_phone_sample ---"
+signal_diag examples/samsung_phone_sample.sr CLK DATA RST VCC
+echo "--- samsung_phone2_sample ---"
+signal_diag examples/samsung_phone2_sample.sr CLK DATA RST VCC
+echo "--- sunrise_phone_sample ---"
+signal_diag examples/sunrise_phone_sample.sr CLK DATA
+echo "--- sim_turnon ---"
+signal_diag examples/sim_turnon_2_clicking_around_ds.sr CLK DATA
 
 # unit tests
 echo "=== unit tests ==="

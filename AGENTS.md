@@ -8,93 +8,89 @@ reader logs.
 
 ### Complete auto-test trace list
 
-| Trace | Channels | CLK | DATA | RST | VCC | Mode |
-|-------|----------|-----|------|-----|-----|------|
-| `test_8_raw16.sr` | 8ch | D1 | D6 | D0 | D4 | ATR + mid-session |
-| `test_7_raw16.sr` | 8ch | D1 | D6 | D0 | D4 | ATR |
-| `phone_reference_live_16M.sr` | 8ch | D1 | D6 | D0 | D4 | mid-session, gated CLK |
-| `samsung_phone_sample.sr` | 8ch | D1 | D6 | D0 | D4 | mid-session, gated CLK, F=512/D=32 |
-| `samsung_phone2_sample.sr` | 8ch | D1 | D6 | D0 | D4 | mid-session, gated CLK |
-| `sunrise_phone_sample.sr` | **2ch** | **D0** | **D1** | — | — | mid-session, gated CLK |
-| `sim_turnon_2_clicking_around_ds.sr` | **6ch** | **1** | **0** | — | — | SIM power-on, gated CLK |
-
-**Note:** `sunrise_phone_sample.sr` only has 2 channels recorded (D0=CLK,
-D1=DATA). `sim_turnon_2_clicking_around_ds.sr` has 6 channels (1=CLK,
-0=DATA). All other traces use 8 channels (D1=CLK, D6=DATA).
+| Trace | CLK | DATA | RST | VCC | Mode |
+|-------|-----|------|-----|-----|------|
+| `test_8_raw16.sr` | CLK | DATA | RST | VCC | ATR + mid-session |
+| `test_7_raw16.sr` | CLK | DATA | RST | VCC | ATR |
+| `phone_reference_live_16M.sr` | CLK | DATA | RST | — | mid-session, gated CLK |
+| `samsung_phone_sample.sr` | CLK | DATA | RST | VCC | mid-session, gated CLK, F=512/D=32 |
+| `samsung_phone2_sample.sr` | CLK | DATA | RST | VCC | mid-session, gated CLK |
+| `sunrise_phone_sample.sr` | CLK | DATA | — | — | mid-session, gated CLK |
+| `sim_turnon_2_clicking_around_ds.sr` | CLK | DATA | — | — | SIM power-on, gated CLK |
 
 ```bash
 # --- test_8 (ATR-included, starts_with_atr=true) ---
 sigrok-cli -i examples/test_8_raw16.sr \
-  -P iso7816:clk=D1:data=D6:rst=D0:clock_option=native:rst_detect=true:starts_with_atr=true:gsmtap_enable=false:pcap_file=/tmp/out.pcap \
+  -P iso7816:clk=CLK:data=DATA:rst=RST:vcc=VCC:clock_option=native:rst_detect=true:starts_with_atr=true:gsmtap_enable=false:pcap_file=/tmp/out.pcap \
   -A iso7816 >/dev/null
 python3 tools/vs_reader.py examples/test_8_reader.log /tmp/out.pcap
 
 # --- test_8 (mid-session, starts_with_atr=false) ---
 sigrok-cli -i examples/test_8_raw16.sr \
-  -P iso7816:clk=D1:data=D6:rst=D0:clock_option=native:rst_detect=true:starts_with_atr=false:gsmtap_enable=false:pcap_file=/tmp/out.pcap \
+  -P iso7816:clk=CLK:data=DATA:rst=RST:vcc=VCC:clock_option=native:rst_detect=true:starts_with_atr=false:gsmtap_enable=false:pcap_file=/tmp/out.pcap \
   -A iso7816 >/dev/null
 python3 tools/vs_reader.py examples/test_8_reader.log /tmp/out.pcap
 
 # --- test_7 (ATR-included) ---
 sigrok-cli -i examples/test_7_raw16.sr \
-  -P iso7816:clk=D1:data=D6:rst=D0:clock_option=native:rst_detect=true:starts_with_atr=true:gsmtap_enable=false:pcap_file=/tmp/out.pcap \
+  -P iso7816:clk=CLK:data=DATA:rst=RST:vcc=VCC:clock_option=native:rst_detect=true:starts_with_atr=true:gsmtap_enable=false:pcap_file=/tmp/out.pcap \
   -A iso7816 >/dev/null
 python3 tools/vs_reader.py examples/test_7_reader.log /tmp/out.pcap
 
 # --- test_7 (mid-session) ---
 sigrok-cli -i examples/test_7_raw16.sr \
-  -P iso7816:clk=D1:data=D6:rst=D0:clock_option=native:rst_detect=true:starts_with_atr=false:gsmtap_enable=false:pcap_file=/tmp/out.pcap \
+  -P iso7816:clk=CLK:data=DATA:rst=RST:vcc=VCC:clock_option=native:rst_detect=true:starts_with_atr=false:gsmtap_enable=false:pcap_file=/tmp/out.pcap \
   -A iso7816 >/dev/null
 python3 tools/vs_reader.py examples/test_7_reader.log /tmp/out.pcap
 
 # --- phone reference (ATR-included, gated CLK) ---
 sigrok-cli -i examples/phone_reference_live_16M.sr \
-  -P iso7816:clk=D1:data=D6:rst=D0:clock_option=native:rst_detect=true:protocol=T=0:starts_with_atr=true:gsmtap_enable=false:pcap_file=/tmp/out.pcap \
+  -P iso7816:clk=CLK:data=DATA:rst=RST:clock_option=native:protocol=T=0:starts_with_atr=true:gsmtap_enable=false:pcap_file=/tmp/out.pcap \
   -A iso7816 >/dev/null
 
 # --- phone reference (mid-session, gated CLK) ---
 sigrok-cli -i examples/phone_reference_live_16M.sr \
-  -P iso7816:clk=D1:data=D6:rst=D0:clock_option=native:rst_detect=true:protocol=T=0:starts_with_atr=false:gsmtap_enable=false:pcap_file=/tmp/out.pcap \
+  -P iso7816:clk=CLK:data=DATA:rst=RST:clock_option=native:protocol=T=0:starts_with_atr=false:gsmtap_enable=false:pcap_file=/tmp/out.pcap \
   -A iso7816 >/dev/null
 
 # --- samsung phone 1 (ATR-included, gated CLK, non-default F/D) ---
 sigrok-cli -i examples/samsung_phone_sample.sr \
-  -P iso7816:clk=D1:data=D6:rst=D0:clock_option=native:rst_detect=true:protocol=T=0:starts_with_atr=true:gsmtap_enable=false:pcap_file=/tmp/out.pcap \
+  -P iso7816:clk=CLK:data=DATA:rst=RST:vcc=VCC:clock_option=native:protocol=T=0:starts_with_atr=true:gsmtap_enable=false:pcap_file=/tmp/out.pcap \
   -A iso7816 >/dev/null
 
 # --- samsung phone 1 (mid-session, gated CLK, non-default F/D) ---
 sigrok-cli -i examples/samsung_phone_sample.sr \
-  -P iso7816:clk=D1:data=D6:rst=D0:clock_option=native:rst_detect=true:protocol=T=0:starts_with_atr=false:gsmtap_enable=false:pcap_file=/tmp/out.pcap \
+  -P iso7816:clk=CLK:data=DATA:rst=RST:vcc=VCC:clock_option=native:protocol=T=0:starts_with_atr=false:gsmtap_enable=false:pcap_file=/tmp/out.pcap \
   -A iso7816 >/dev/null
 
 # --- samsung phone 2 (ATR-included, gated CLK, non-default F/D) ---
 sigrok-cli -i examples/samsung_phone2_sample.sr \
-  -P iso7816:clk=D1:data=D6:rst=D0:clock_option=native:rst_detect=true:protocol=T=0:starts_with_atr=true:gsmtap_enable=false:pcap_file=/tmp/out.pcap \
+  -P iso7816:clk=CLK:data=DATA:rst=RST:vcc=VCC:clock_option=native:protocol=T=0:starts_with_atr=true:gsmtap_enable=false:pcap_file=/tmp/out.pcap \
   -A iso7816 >/dev/null
 
 # --- samsung phone 2 (mid-session, gated CLK, non-default F/D) ---
 sigrok-cli -i examples/samsung_phone2_sample.sr \
-  -P iso7816:clk=D1:data=D6:rst=D0:clock_option=native:rst_detect=true:protocol=T=0:starts_with_atr=false:gsmtap_enable=false:pcap_file=/tmp/out.pcap \
+  -P iso7816:clk=CLK:data=DATA:rst=RST:vcc=VCC:clock_option=native:protocol=T=0:starts_with_atr=false:gsmtap_enable=false:pcap_file=/tmp/out.pcap \
   -A iso7816 >/dev/null
 
 # --- sunrise phone (ATR-included, gated CLK, 2-channel capture) ---
 sigrok-cli -i examples/sunrise_phone_sample.sr \
-  -P iso7816:clk=D0:data=D1:clock_option=native:protocol=T=0:starts_with_atr=true:gsmtap_enable=false:pcap_file=/tmp/out.pcap \
+  -P iso7816:clk=CLK:data=DATA:clock_option=native:protocol=T=0:starts_with_atr=true:gsmtap_enable=false:pcap_file=/tmp/out.pcap \
   -A iso7816 >/dev/null
 
 # --- sunrise phone (mid-session, gated CLK, 2-channel capture) ---
 sigrok-cli -i examples/sunrise_phone_sample.sr \
-  -P iso7816:clk=D0:data=D1:clock_option=native:protocol=T=0:starts_with_atr=false:gsmtap_enable=false:pcap_file=/tmp/out.pcap \
+  -P iso7816:clk=CLK:data=DATA:clock_option=native:protocol=T=0:starts_with_atr=false:gsmtap_enable=false:pcap_file=/tmp/out.pcap \
   -A iso7816 >/dev/null
 
 # --- sim power-on (ATR-included, gated CLK, 6-channel capture) ---
 sigrok-cli -i examples/sim_turnon_2_clicking_around_ds.sr \
-  -P iso7816:clk=1:data=0:clock_option=native:rst_detect=true:protocol=T=0:starts_with_atr=true:gsmtap_enable=false:pcap_file=/tmp/out.pcap \
+  -P iso7816:clk=CLK:data=DATA:clock_option=native:rst_detect=true:protocol=T=0:starts_with_atr=true:gsmtap_enable=false:pcap_file=/tmp/out.pcap \
   -A iso7816 >/dev/null
 
 # --- sim power-on (mid-session, gated CLK, 6-channel capture) ---
 sigrok-cli -i examples/sim_turnon_2_clicking_around_ds.sr \
-  -P iso7816:clk=1:data=0:clock_option=native:rst_detect=true:protocol=T=0:starts_with_atr=false:gsmtap_enable=false:pcap_file=/tmp/out.pcap \
+  -P iso7816:clk=CLK:data=DATA:clock_option=native:rst_detect=true:protocol=T=0:starts_with_atr=false:gsmtap_enable=false:pcap_file=/tmp/out.pcap \
   -A iso7816 >/dev/null
 
 # --- unit tests ---
@@ -118,17 +114,17 @@ The acceptance criteria are:
 - All traces must be tested in **both modes** (ATR-included and mid-session)
   to verify the decoder works correctly regardless of user setting.
 
-**Current status (v1.1.3, average CLK period fix):**
+**Current status (v1.1.3, channel-name fix):**
 
 | Trace | ATR-included APDUs | mid-session APDUs | Notes |
 |-------|-------------------:|------------------:|-------|
-| `test_8_raw16` | 38 | 38 | both modes now work (fixed average CLK period) |
-| `test_7_raw16` | 8 | 8 | both modes now work (fixed average CLK period) |
+| `test_8_raw16` | 38 | 38 | both modes work |
+| `test_7_raw16` | 8 | 8 | both modes work |
 | `phone_reference_live_16M` | 0 | 224 | ATR-included: no ATR in capture (gated CLK), mid-session works |
-| `samsung_phone_sample` | 2 | 0 | mid-session finds false ATR, no APDUs |
-| `samsung_phone2_sample` | 0 | 61 | mid-session: 61 garbage (gated CLK, no ATR framing) |
-| `sunrise_phone_sample` | 711 | 1 | ATR-included works; mid-session finds ATR but 1 APDU |
-| `sim_turnon_2_clicking_around_ds` | 0 | 0 | no ATR in trace (power-on capture) |
+| `samsung_phone_sample` | 2 | 39 | ATR-included finds ATR, mid-session finds ATR + 39 APDUs |
+| `samsung_phone2_sample` | 0 | 0 | gated CLK, non-default F/D; no ATR in trace |
+| `sunrise_phone_sample` | 711 | 1 | ATR-included works; mid-session: 1 APDU |
+| `sim_turnon_2_clicking_around_ds` | 878 | 10 | ATR-included: 878 APDUs; mid-session: 10 (1 mis-framed) |
 
 **Note on v1.1.3 fix:** The decoder measures CLK period as an average instead of using the minimum recurring period. This correctly handles traces where CLK periods alternate (e.g., 4,3,3 pattern for ~5.33MHz CLK at 16MHz sample rate). The fix changed `_measure_clock_period()` to use `sum(spacings) / len(spacings)` instead of `_robust_min(spacings)`, giving accurate `spc` values like 3.333... instead of 3. This corrected the `_wait_clk_rising()` skip calculation, fixing the post-ATR byte alignment issue.
 
