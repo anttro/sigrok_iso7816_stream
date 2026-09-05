@@ -28,7 +28,7 @@ from .gsmtap_stream import (GsmtapStreamSender,
     GSMTAP_SIM_RST_EVENT, GSMTAP_SIM_VCC_EVENT,
     GSMTAP_FLAG_BAD_FCS)
 
-VERSION = '1.1.6'
+VERSION = '1.1.8'
 
 
 
@@ -143,21 +143,52 @@ def plausible_ins(ins):
     return True
 
 
+def validate_t0_apdu(packet):
+    '''Return (valid, reason) for a reassembled T=0 APDU.
+
+    Validation is purely structural: we parse the 5-byte header and
+    verify that the packet length, CLA, INS and status word are all
+    plausible.  No content scanning of command/response data is performed,
+    so the check has very low false-positive risk.  It catches truncation,
+    missing status words, and obviously bogus header bytes.  Concatenated
+    APDUs cannot be detected from length alone (the case is not encoded
+    in the assembled bytes); that requires case/state information and
+    is left for a later reframing stage.
+    '''
+    n = len(packet)
+
+    if n < 7:
+        return (False, 'too short (< 7)')
+    if n > MAX_TPDU_LEN:
+        return (False, 'exceeds T=0 max length')
+
+    cla = packet[0]
+    ins = packet[1]
+    sw1 = packet[-2]
+
+    if not plausible_cla(cla):
+        return (False, 'invalid CLA')
+    if not plausible_ins(ins):
+        return (False, 'invalid INS')
+    if not plausible_sw(sw1):
+        return (False, 'invalid SW1')
+
+    return (True, None)
+
+
 def is_desynced(packet):
     '''Classify an emitted T=0 packet as mis-framed.
 
     All-zero packets are idle-low noise (suppressed elsewhere), NOT
     desync.  A real TPDU must reach its status word: >= 7 bytes ending
     in a plausible SW1, never exceed the T=0 maximum, and start with a
-    valid CLA byte.'''
+    valid CLA/INS pair.'''
     if not packet:
         return False
     if all(b == 0 for b in packet):
         return False
-    return (len(packet) > MAX_TPDU_LEN
-            or len(packet) < 7
-            or not plausible_sw(packet[-2])
-            or not plausible_cla(packet[0]))
+    valid, _ = validate_t0_apdu(packet)
+    return not valid
 
 
 MAX_TPDU_LEN = 271  # ISO 7816-3 T=0: header(5) + proc + 255 + SW(2) < 271

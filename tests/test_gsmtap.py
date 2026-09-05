@@ -106,5 +106,59 @@ class TestDesyncHelpers(unittest.TestCase):
         self.assertFalse(self.pd.is_desynced(b'\x00' * 7))
 
 
+class TestValidateT0Apdu(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.gs, cls.pd = _load_iso7816()
+
+    def _valid(self, packet):
+        valid, reason = self.pd.validate_t0_apdu(packet)
+        self.assertTrue(valid, 'expected valid, got: ' + str(reason))
+
+    def _invalid(self, packet, expected_reason_substring=None):
+        valid, reason = self.pd.validate_t0_apdu(packet)
+        self.assertFalse(valid, 'expected invalid')
+        if expected_reason_substring:
+            self.assertIn(expected_reason_substring, reason)
+
+    def test_valid_case1_direct_sw(self):
+        # P3=0, 7 bytes, direct SW
+        self._valid(b'\x00\xa4\x00\x04\x00\x90\x00')
+
+    def test_valid_direct_sw_with_p3_nonzero(self):
+        # Card can reject a command and send SW immediately, even with P3>0
+        self._valid(b'\x00\xa4\x00\x04\x02\x90\x00')
+
+    def test_valid_case2_with_response(self):
+        # header(5) + 2 response bytes + SW(2)
+        self._valid(b'\x00\xb0\x00\x00\x02\x12\x34\x90\x00')
+
+    def test_valid_case3_with_command_data(self):
+        # header(5) + 4 command bytes + SW(2)
+        self._valid(b'\x00\xd6\x00\x00\x04\x11\x22\x33\x44\x90\x00')
+
+    def test_invalid_too_short(self):
+        self._invalid(b'\x00\xa4\x00\x04\x00\x90', 'too short')
+
+    def test_invalid_cla(self):
+        self._invalid(b'\xff\xa4\x00\x04\x00\x90\x00', 'invalid CLA')
+
+    def test_invalid_ins_zero(self):
+        self._invalid(b'\x00\x00\x00\x04\x00\x90\x00', 'invalid INS')
+
+    def test_invalid_ins_lsb_odd(self):
+        self._invalid(b'\x00\xa5\x00\x04\x00\x90\x00', 'invalid INS')
+
+    def test_invalid_ins_sw_collision(self):
+        self._invalid(b'\x00\x64\x00\x04\x00\x90\x00', 'invalid INS')
+
+    def test_invalid_sw1(self):
+        self._invalid(b'\x00\xa4\x00\x04\x00\xff\x00', 'invalid SW1')
+
+    def test_invalid_oversized(self):
+        big = bytes([0x00, 0xb2, 0x00, 0x00, 0xff]) + b'\x00' * 300
+        self._invalid(big, 'exceeds T=0 max length')
+
+
 if __name__ == '__main__':
     unittest.main()

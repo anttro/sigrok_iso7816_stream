@@ -168,10 +168,27 @@ and must be accepted.  However, during test runs against the example traces,
 any CLA value outside `0x00-0x0F` and `0x80-0x8F` is an error flag indicating
 the decoder mis-framed the byte stream.
 
-#### ISO 7816 APDU constraints (reference — not enforced in decoder yet)
+#### ISO 7816 APDU validation (enforced from v1.1.7)
 
-These constraints can be used for APDU validation in future work.  They
-are not currently enforced by the decoder.
+The decoder validates every reassembled T=0 APDU with `validate_t0_apdu()`
+before emitting it.  Invalid APDUs are still packed into gsmtap but are
+flagged with `GSMTAP_FLAG_BAD_FCS`.
+
+Validation is purely structural (no content scanning of command/response
+data), so the false-positive rate is very low.  The checks are:
+
+1. Length is at least 7 bytes (header + SW) and at most `MAX_TPDU_LEN` (271).
+2. CLA byte is in the recognized set (`0x00`, `0x04`, `0x08`, `0x80`,
+   `0x84`, `0xA0`, `0xB0`).
+3. INS byte is plausible: not `0x00`, not in `0x6x`/`0x9x` (status-word
+   collision), and the least-significant bit is `0`.
+4. The penultimate byte (SW1) is in `0x6x` or `0x9x`.
+
+The current validation deliberately does **not** enforce P3-based length
+constraints, because a card may reject a command and send the status word
+immediately even when P3 > 0.  Detecting concatenated APDUs requires
+additional case/state information and is planned for a later reframing
+stage.
 
 ##### T=0 Procedure Bytes
 
@@ -228,7 +245,7 @@ Standard interindustry INS values: `A4` (SELECT), `B0` (READ BINARY),
 
 ### Versioning
 
-The decoder version is defined in `pd.py` as `VERSION = '1.1.6'`.
+The decoder version is defined in `pd.py` as `VERSION = '1.1.8'`.
 The version is printed to the log on decoder startup.
 
 ### Testing after decoder changes

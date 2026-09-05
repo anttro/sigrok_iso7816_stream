@@ -45,6 +45,48 @@ GSMTAP_FLAG_BAD_FCS = 0x01
 # Valid CLA values for ISO 7816 / 3GPP
 VALID_CLA = {0x00, 0x04, 0x08, 0x80, 0x84, 0xA0, 0xB0}
 
+# ISO 7816-3 T=0 max TPDU length: header(5) + procedure bytes + 255 data + SW(2)
+MAX_TPDU_LEN = 271
+
+
+def _plausible_sw(sw1):
+    return (0x60 <= sw1 <= 0x6F) or (0x90 <= sw1 <= 0x9F)
+
+
+def _plausible_ins(ins):
+    if ins == 0x00:
+        return False
+    if (ins & 0xF0) == 0x60 or (ins & 0xF0) == 0x90:
+        return False
+    if (ins & 0x01) != 0:
+        return False
+    return True
+
+
+def validate_t0_apdu(packet):
+    '''See validate_t0_apdu in pd.py; same rules, duplicated here so the
+    standalone vs_reader can classify pcap entries without importing the
+    sigrok decoder module.'''
+    n = len(packet)
+
+    if n < 7:
+        return (False, 'too short (< 7)')
+    if n > MAX_TPDU_LEN:
+        return (False, 'exceeds T=0 max length')
+
+    cla = packet[0]
+    ins = packet[1]
+    sw1 = packet[-2]
+
+    if cla not in VALID_CLA:
+        return (False, 'invalid CLA')
+    if not _plausible_ins(ins):
+        return (False, 'invalid INS')
+    if not _plausible_sw(sw1):
+        return (False, 'invalid SW1')
+
+    return (True, None)
+
 
 def parse_reader_log(path):
     """Return list of exchange byte-strings (C-APDU + R-APDU concatenated)."""
@@ -103,16 +145,13 @@ def is_cat(apdu_hex):
 
 
 def looks_valid(apdu_hex):
-    """Heuristic: a plausible ISO 7816-4 exchange has a sane CLA (not the
-    T=0 NULL byte 0x60), is >= 7 bytes, and ends in a status word
-    (SW1 in 0x6x or 0x9x)."""
+    """Structural validation for an ISO 7816-4 T=0 APDU.
+
+    Delegates to validate_t0_apdu(); kept as a thin wrapper for
+    backwards compatibility with existing reports."""
     b = bytes.fromhex(apdu_hex)
-    if len(b) < 7:
-        return False
-    if b[0] == 0x60:  # NULL byte mis-framed as CLA
-        return False
-    sw1 = b[-2]
-    return (0x60 <= sw1 <= 0x6F) or (0x90 <= sw1 <= 0x9F)
+    valid, _ = validate_t0_apdu(b)
+    return valid
 
 
 def byte_diff_details(expected_hex, actual_hex):

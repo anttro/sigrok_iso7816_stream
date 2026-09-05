@@ -1,7 +1,7 @@
-=== Baseline captured 2026-09-05T13:08:39+03:00 ===
+=== Baseline captured 2026-09-05T15:30:23+03:00 ===
 
 === test_8 ATR-included ===
-('=== iso7816 decoder v1.1.6 ===',)
+('=== iso7816 decoder v1.1.8 ===',)
 ('Invalid TS byte 0x90 (pre-activation?), resyncing',)
 iso7816-1: Invalid TS byte 0x90 - skipped
 ('Invalid TS byte 0x00 (pre-activation?), resyncing',)
@@ -40,7 +40,7 @@ Degradation metrics:
 RESULT: OK - capture fully explained (reader + CAT + valid retries)
 
 === test_8 mid-session ===
-('=== iso7816 decoder v1.1.6 ===',)
+('=== iso7816 decoder v1.1.8 ===',)
 ('etu recovered (samples):', 1237)
 ('warm reset: re-arming ATR hunt',)
 ('Invalid TS byte 0x95 (pre-activation?), resyncing',)
@@ -79,7 +79,7 @@ Degradation metrics:
 RESULT: OK - capture fully explained (reader + CAT + valid retries)
 
 === test_7 ATR-included ===
-('=== iso7816 decoder v1.1.6 ===',)
+('=== iso7816 decoder v1.1.8 ===',)
 ('warm reset: re-arming ATR hunt',)
 ('Invalid TS byte 0x07 (pre-activation?), resyncing',)
 iso7816-1: Invalid TS byte 0x07 - skipped
@@ -118,7 +118,7 @@ Degradation metrics:
 RESULT: OK - capture fully explained (reader + CAT + valid retries)
 
 === test_7 mid-session ===
-('=== iso7816 decoder v1.1.6 ===',)
+('=== iso7816 decoder v1.1.8 ===',)
 ('warm reset: re-arming ATR hunt',)
 ('etu recovered (samples):', 1236)
 ('warm reset: re-arming ATR hunt',)
@@ -157,7 +157,7 @@ Degradation metrics:
 RESULT: OK - capture fully explained (reader + CAT + valid retries)
 
 === xiaomi_phone_sample ATR-included ===
-('=== iso7816 decoder v1.1.6 ===',)
+('=== iso7816 decoder v1.1.8 ===',)
 ('Invalid TS byte 0xf4 (pre-activation?), resyncing',)
 iso7816-1: Invalid TS byte 0xf4 - skipped
 (11685168, 'CHKSUM ERROR: ', 0, 'bits: ', [0, 1, 1, 1, 1, 1, 1, 1, 1, 1])
@@ -196,7 +196,7 @@ Degradation metrics:
 RESULT: OK - capture fully explained (reader + CAT + valid retries)
 
 === xiaomi_phone_sample mid-session ===
-('=== iso7816 decoder v1.1.6 ===',)
+('=== iso7816 decoder v1.1.8 ===',)
 ('etu recovered (samples):', 53)
 (11673977, 'CHKSUM ERROR: ', 0, 'bits: ', [0, 0, 0, 1, 0, 0, 1, 1, 1, 1])
 iso7816-1: CHKSUM ERROR bits=[0, 0, 0, 1, 0, 0, 1, 1, 1, 1]
@@ -235,7 +235,7 @@ Degradation metrics:
 RESULT: OK - capture fully explained (reader + CAT + valid retries)
 
 === samsung_phone_sample ATR-included ===
-('=== iso7816 decoder v1.1.6 ===',)
+('=== iso7816 decoder v1.1.8 ===',)
 (3125821, 'CHKSUM ERROR: ', 0, 'bits: ', [0, 0, 0, 1, 1, 1, 1, 1, 1, 1])
 iso7816-1: CHKSUM ERROR bits=[0, 0, 0, 1, 1, 1, 1, 1, 1, 1]
 ('Invalid TS byte 0xfc (pre-activation?), resyncing',)
@@ -274,7 +274,7 @@ Degradation metrics:
 RESULT: OK - capture fully explained (reader + CAT + valid retries)
 
 === samsung_phone_sample mid-session ===
-('=== iso7816 decoder v1.1.6 ===',)
+('=== iso7816 decoder v1.1.8 ===',)
 ('etu recovered (samples):', 72)
 (3272987, 'CHKSUM ERROR: ', 0, 'bits: ', [0, 0, 1, 1, 1, 1, 1, 1, 1, 0])
 iso7816-1: CHKSUM ERROR bits=[0, 0, 1, 1, 1, 1, 1, 1, 1, 0]
@@ -357,8 +357,19 @@ test_build_packet_bad_fcs_flag (__main__.TestGsmtapFlags.test_build_packet_bad_f
 test_build_packet_payload_passthrough (__main__.TestGsmtapFlags.test_build_packet_payload_passthrough) ... ok
 test_build_packet_plain_res_zero (__main__.TestGsmtapFlags.test_build_packet_plain_res_zero) ... ok
 test_flag_constant_value (__main__.TestGsmtapFlags.test_flag_constant_value) ... ok
+test_invalid_cla (__main__.TestValidateT0Apdu.test_invalid_cla) ... ok
+test_invalid_ins_lsb_odd (__main__.TestValidateT0Apdu.test_invalid_ins_lsb_odd) ... ok
+test_invalid_ins_sw_collision (__main__.TestValidateT0Apdu.test_invalid_ins_sw_collision) ... ok
+test_invalid_ins_zero (__main__.TestValidateT0Apdu.test_invalid_ins_zero) ... ok
+test_invalid_oversized (__main__.TestValidateT0Apdu.test_invalid_oversized) ... ok
+test_invalid_sw1 (__main__.TestValidateT0Apdu.test_invalid_sw1) ... ok
+test_invalid_too_short (__main__.TestValidateT0Apdu.test_invalid_too_short) ... ok
+test_valid_case1_direct_sw (__main__.TestValidateT0Apdu.test_valid_case1_direct_sw) ... ok
+test_valid_case2_with_response (__main__.TestValidateT0Apdu.test_valid_case2_with_response) ... ok
+test_valid_case3_with_command_data (__main__.TestValidateT0Apdu.test_valid_case3_with_command_data) ... ok
+test_valid_direct_sw_with_p3_nonzero (__main__.TestValidateT0Apdu.test_valid_direct_sw_with_p3_nonzero) ... ok
 
 ----------------------------------------------------------------------
-Ran 12 tests in 0.007s
+Ran 23 tests in 0.009s
 
 OK
