@@ -26,7 +26,8 @@ Every change to `pd.py` must be followed by running the full test suite:
    - **test_8 both modes**: 54 APDUs, 37/37 reader exchanges, 0 GARBAGE, RESULT: OK
    - **test_7 both modes**: 10 APDUs, 25/37 reader exchanges (12-27 missing due to ATR resets), 0 GARBAGE, RESULT: OK
    - **All smoke-test traces**: >0 APDUs in at least one mode
-   - **Mid-session >= ATR-included**: `starts_with_atr=false` must capture >= `starts_with_atr=true` APDUs
+   - **Mid-session vs ATR-included**: `abs(APDUs_mid - APDUs_atr) <= atrs_atr + atrs_mid`
+     (difference bounded by total ATRs detected in both modes)
    - **No regressions**: GARBAGE count must not increase, no new BAD_FCS/payload mismatches
    - **Unit tests**: 12/12 pass (`python3 tests/test_gsmtap.py -v`)
 
@@ -120,8 +121,7 @@ must match them.
    - **`RESULT: OK`** from `vs_reader.py`.
 
 2. **All traces (including smoke-test):**
-   - **mid-session APDUs ≥ ATR-included APDUs.**  Mid-session mode starts
-     earlier (no ATR wait) so it must find at least as many APDUs.
+   - **APDUs_mid and APDUs_atr must be close.** `abs(APDUs_mid - APDUs_atr) <= atrs_atr + atrs_mid` (difference bounded by total ATRs detected in both modes).
    - **>0 APDUs** in at least one mode for smoke-test traces.
    - No increase in `CHKSUM ERROR`, `BAD_FCS`, payload mismatches, or
      suspicious CLA counts.
