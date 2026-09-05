@@ -1,7 +1,7 @@
-=== Baseline captured 2026-09-05T12:13:45+03:00 ===
+=== Baseline captured 2026-09-05T12:25:03+03:00 ===
 
 === test_8 ATR-included ===
-('iso7816 decoder v1.1.4',)
+('=== iso7816 decoder v1.1.5 ===',)
 ('Invalid TS byte 0x90 (pre-activation?), resyncing',)
 iso7816-1: Invalid TS byte 0x90 - skipped
 ('Invalid TS byte 0x00 (pre-activation?), resyncing',)
@@ -40,7 +40,7 @@ Degradation metrics:
 RESULT: OK - capture fully explained (reader + CAT + valid retries)
 
 === test_8 mid-session ===
-('iso7816 decoder v1.1.4',)
+('=== iso7816 decoder v1.1.5 ===',)
 ('etu recovered (samples):', 1237)
 ('warm reset: re-arming ATR hunt',)
 ('Invalid TS byte 0x95 (pre-activation?), resyncing',)
@@ -79,7 +79,7 @@ Degradation metrics:
 RESULT: OK - capture fully explained (reader + CAT + valid retries)
 
 === test_7 ATR-included ===
-('iso7816 decoder v1.1.4',)
+('=== iso7816 decoder v1.1.5 ===',)
 ('warm reset: re-arming ATR hunt',)
 ('Invalid TS byte 0x07 (pre-activation?), resyncing',)
 iso7816-1: Invalid TS byte 0x07 - skipped
@@ -118,7 +118,7 @@ Degradation metrics:
 RESULT: OK - capture fully explained (reader + CAT + valid retries)
 
 === test_7 mid-session ===
-('iso7816 decoder v1.1.4',)
+('=== iso7816 decoder v1.1.5 ===',)
 ('warm reset: re-arming ATR hunt',)
 ('etu recovered (samples):', 1236)
 ('warm reset: re-arming ATR hunt',)
@@ -157,7 +157,7 @@ Degradation metrics:
 RESULT: OK - capture fully explained (reader + CAT + valid retries)
 
 === xiaomi_phone_sample ATR-included ===
-('iso7816 decoder v1.1.4',)
+('=== iso7816 decoder v1.1.5 ===',)
 ('Invalid TS byte 0xf4 (pre-activation?), resyncing',)
 iso7816-1: Invalid TS byte 0xf4 - skipped
 (11685168, 'CHKSUM ERROR: ', 0, 'bits: ', [0, 1, 1, 1, 1, 1, 1, 1, 1, 1])
@@ -196,7 +196,7 @@ Degradation metrics:
 RESULT: OK - capture fully explained (reader + CAT + valid retries)
 
 === xiaomi_phone_sample mid-session ===
-('iso7816 decoder v1.1.4',)
+('=== iso7816 decoder v1.1.5 ===',)
 ('etu recovered (samples):', 53)
 (11673977, 'CHKSUM ERROR: ', 0, 'bits: ', [0, 0, 0, 1, 0, 0, 1, 1, 1, 1])
 iso7816-1: CHKSUM ERROR bits=[0, 0, 0, 1, 0, 0, 1, 1, 1, 1]
@@ -235,7 +235,7 @@ Degradation metrics:
 RESULT: OK - capture fully explained (reader + CAT + valid retries)
 
 === samsung_phone_sample ATR-included ===
-('iso7816 decoder v1.1.4',)
+('=== iso7816 decoder v1.1.5 ===',)
 (3125821, 'CHKSUM ERROR: ', 0, 'bits: ', [0, 0, 0, 1, 1, 1, 1, 1, 1, 1])
 iso7816-1: CHKSUM ERROR bits=[0, 0, 0, 1, 1, 1, 1, 1, 1, 1]
 ('Invalid TS byte 0xfc (pre-activation?), resyncing',)
@@ -274,7 +274,7 @@ Degradation metrics:
 RESULT: OK - capture fully explained (reader + CAT + valid retries)
 
 === samsung_phone_sample mid-session ===
-('iso7816 decoder v1.1.4',)
+('=== iso7816 decoder v1.1.5 ===',)
 ('etu recovered (samples):', 72)
 (3272987, 'CHKSUM ERROR: ', 0, 'bits: ', [0, 0, 1, 1, 1, 1, 1, 1, 1, 0])
 iso7816-1: CHKSUM ERROR bits=[0, 0, 1, 1, 1, 1, 1, 1, 1, 0]

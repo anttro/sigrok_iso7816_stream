@@ -28,7 +28,7 @@ from .gsmtap_stream import (GsmtapStreamSender,
     GSMTAP_SIM_RST_EVENT, GSMTAP_SIM_VCC_EVENT,
     GSMTAP_FLAG_BAD_FCS)
 
-VERSION = '1.1.4'
+VERSION = '1.1.5'
 
 
 
@@ -363,7 +363,7 @@ class Decoder(srd.Decoder):
                 self.vcc_min_gap = int(self.samplerate * 0.010)
 
     def start(self):
-        self.log("iso7816 decoder v{}".format(VERSION))
+        self.log("=== iso7816 decoder v{} ===".format(VERSION))
         self.out_python = self.register(srd.OUTPUT_PYTHON)
         self.out_ann = self.register(srd.OUTPUT_ANN)
         self.out_binary = self.register(srd.OUTPUT_BINARY)
