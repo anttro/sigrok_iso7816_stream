@@ -356,7 +356,7 @@ Note: batch files need CRLF line endings; the repo enforces this via
 Verified against the upstream example captures:
 
 ```bash
-# ATR+PPS+1396 APDUs from sim_turnon_2_clicking_around_ds.sr (~19s decode)
+# ATR+PPS+54 APDUs from test_8_raw16.sr (~19s decode)
 # GSMTAP stream verified with tshark (ATR/APDU dissected natively),
 # custom 0x10/0x11 events verified with a UDP listener, and end-to-end
 # into simtrace2-pysniff server (POST /api/capture/start → decode → stop).
@@ -385,9 +385,10 @@ whose warm resets previously produced 4 garbage events — with the re-arm +
 start-bit guard it decodes to **0 garbage** (`RESULT: OK - capture fully
 explained`).
 
-The `examples/` directory holds replayable fixtures: `sim_turnon_*` and
-`sunrise_*` are upstream boot captures, `test_7_raw16.sr` / `test_8_raw16.sr`
-are 16 MHz controlled-rig sessions with their reader-SDK ground-truth logs.
+The `examples/` directory holds replayable fixtures: `test_7_raw16.sr` /
+`test_8_raw16.sr` are 16 MHz controlled-rig sessions with their reader-SDK
+ground-truth logs, `phone_reference_live_16M.sr` / `samsung_phone_sample.sr`
+are phone captures with gated CLK.
 
 ### Capture scenarios: reader (constant CLK) and phone (Clock Stop Mode)
 

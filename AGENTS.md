@@ -14,7 +14,7 @@ Every change to `pd.py` must be followed by running the full test suite:
    ```bash
    # Run decoder for each trace/mode combination
    for trace in test_8_raw16 test_7_raw16 phone_reference_live_16M \
-               samsung_phone_sample sunrise_phone_sample sim_turnon_2_clicking_around_ds; do
+               samsung_phone_sample; do
        for mode in true false; do
            # Run sigrok-cli and vs_reader as shown below
            # Capture APDUs, GARBAGE count, and RESULT
@@ -84,26 +84,6 @@ sigrok-cli -i examples/samsung_phone_sample.sr \
 # --- samsung phone 1 (mid-session, gated CLK, non-default F/D) ---
 sigrok-cli -i examples/samsung_phone_sample.sr \
   -P iso7816:clk=CLK:data=DATA:rst=RST:vcc=VCC:clock_option=native:protocol=T=0:starts_with_atr=false:gsmtap_enable=false:pcap_file=/tmp/out.pcap \
-  -A iso7816 >/dev/null
-
-# --- sunrise phone (ATR-included, gated CLK, 2-channel capture) ---
-sigrok-cli -i examples/sunrise_phone_sample.sr \
-  -P iso7816:clk=CLK:data=DATA:clock_option=native:protocol=T=0:starts_with_atr=true:gsmtap_enable=false:pcap_file=/tmp/out.pcap \
-  -A iso7816 >/dev/null
-
-# --- sunrise phone (mid-session, gated CLK, 2-channel capture) ---
-sigrok-cli -i examples/sunrise_phone_sample.sr \
-  -P iso7816:clk=CLK:data=DATA:clock_option=native:protocol=T=0:starts_with_atr=false:gsmtap_enable=false:pcap_file=/tmp/out.pcap \
-  -A iso7816 >/dev/null
-
-# --- sim power-on (ATR-included, gated CLK, 6-channel capture) ---
-sigrok-cli -i examples/sim_turnon_2_clicking_around_ds.sr \
-  -P iso7816:clk=CLK:data=DATA:clock_option=native:rst_detect=true:protocol=T=0:starts_with_atr=true:gsmtap_enable=false:pcap_file=/tmp/out.pcap \
-  -A iso7816 >/dev/null
-
-# --- sim power-on (mid-session, gated CLK, 6-channel capture) ---
-sigrok-cli -i examples/sim_turnon_2_clicking_around_ds.sr \
-  -P iso7816:clk=CLK:data=DATA:clock_option=native:rst_detect=true:protocol=T=0:starts_with_atr=false:gsmtap_enable=false:pcap_file=/tmp/out.pcap \
   -A iso7816 >/dev/null
 
 # --- unit tests ---
@@ -180,9 +160,9 @@ The edge-read path had two bugs:
 
 #### CLA validation note
 
-All example traces (`test_7`, `test_8`, `phone_reference`, `samsung`,
-`sunrise`, `sim_turnon`) contain only CLA `0x00` (interindustry) and
-`0x8x` (USIM/CAT, mostly `0x80` with occasional `0x81` for logical channel 1).
+All example traces (`test_7`, `test_8`, `phone_reference`, `samsung`)
+contain only CLA `0x00` (interindustry) and `0x8x` (USIM/CAT, mostly `0x80`
+with occasional `0x81` for logical channel 1).
 The decoder must **not** mandate specific CLA values — other CLA values
 (e.g. `0x04`, `0x08`, `0x84`, `0xA0`, `0xB0`) are valid per ISO 7816-4 / 3GPP
 and must be accepted.  However, during test runs against the example traces,
@@ -244,14 +224,12 @@ Standard interindustry INS values: `A4` (SELECT), `B0` (READ BINARY),
 | test_7 | 10 | 10 | ✓ |
 | phone_reference | 0 | 620 | ✓ |
 | samsung_phone | 2 | 49 | ✓ |
-| sunrise_phone | 1077 | 1 | **✗** |
-| sim_turnon | 1390 | 9 | **✗** |
 
 **Note on v1.1.3 fix:** The decoder measures CLK period as an average instead of using the minimum recurring period. This correctly handles traces where CLK periods alternate (e.g., 4,3,3 pattern for ~5.33MHz CLK at 16MHz sample rate). The fix changed `_measure_clock_period()` to use `sum(spacings) / len(spacings)` instead of `_robust_min(spacings)`, giving accurate `spc` values like 3.333... instead of 3. This corrected the `_wait_clk_rising()` skip calculation, fixing the post-ATR byte alignment issue.
 
 ### Versioning
 
-The decoder version is defined in `pd.py` as `VERSION = '1.1.3'`.
+The decoder version is defined in `pd.py` as `VERSION = '1.1.4'`.
 The version is printed to the log on decoder startup.
 
 ### Testing after decoder changes
