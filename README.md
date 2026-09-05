@@ -387,7 +387,7 @@ explained`).
 
 The `examples/` directory holds replayable fixtures: `test_7_raw16.sr` /
 `test_8_raw16.sr` are 16 MHz controlled-rig sessions with their reader-SDK
-ground-truth logs, `phone_reference_live_16M.sr` / `samsung_phone_sample.sr`
+ground-truth logs, `xiaomi_phone_sample.sr` / `samsung_phone_sample.sr`
 are phone captures with gated CLK.
 
 ### Capture scenarios: reader (constant CLK) and phone (Clock Stop Mode)
@@ -408,7 +408,7 @@ The decoder handles the two physically different SIM sniffing setups:
   line via edge counting, locks it, and decodes with the drift-immune
   edge-list bit reader. T=0 case 3/4 commands (e.g. `80 12`/`80 14` STK
   envelope) are consolidated into a single command→response APDU. Example:
-  `examples/phone_reference_live_16M.sr` decodes to coherent APDUs with the
+  `examples/xiaomi_phone_sample.sr` decodes to coherent APDUs with the
   STK menu text (Roam, I-WLAN, Show IMEI, …) fully readable and no
   `0xff`/`0xfc` sync garbage.
 
@@ -422,7 +422,7 @@ sigrok-cli -i examples/test_8_raw16.sr \
 python3 tools/vs_reader.py examples/test_8_reader.log out.pcap
 
 # Phone capture (mid-session, gated/stopped CLK)
-sigrok-cli -i examples/phone_reference_live_16M.sr \
+sigrok-cli -i examples/xiaomi_phone_sample.sr \
   -P iso7816:clk=D1:data=D6:rst=D0:clock_option=native:rst_detect=true:vcc_detect=false:protocol=T=0:starts_with_atr=false:gsmtap_enable=false:pcap_file=out.pcap \
   -A iso7816
 ```

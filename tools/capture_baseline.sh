@@ -64,9 +64,9 @@ run_test "test_8 mid-session" sigrok-cli -i examples/test_8_raw16.sr -P iso7816:
 run_test "test_7 ATR-included" sigrok-cli -i examples/test_7_raw16.sr -P iso7816:clk=CLK:data=DATA:rst=RST:vcc=VCC:clock_option=native:rst_detect=true:starts_with_atr=true:gsmtap_enable=false:pcap_file=/tmp/out.pcap -A iso7816
 run_test "test_7 mid-session" sigrok-cli -i examples/test_7_raw16.sr -P iso7816:clk=CLK:data=DATA:rst=RST:vcc=VCC:clock_option=native:rst_detect=true:starts_with_atr=false:gsmtap_enable=false:pcap_file=/tmp/out.pcap -A iso7816
 
-# phone_reference
-run_test "phone_reference ATR-included" timeout 30 sigrok-cli -i examples/phone_reference_live_16M.sr -P iso7816:clk=CLK:data=DATA:rst=RST:clock_option=native:protocol=T=0:starts_with_atr=true:gsmtap_enable=false:pcap_file=/tmp/out.pcap -A iso7816
-run_test "phone_reference mid-session" timeout 30 sigrok-cli -i examples/phone_reference_live_16M.sr -P iso7816:clk=CLK:data=DATA:rst=RST:clock_option=native:protocol=T=0:starts_with_atr=false:gsmtap_enable=false:pcap_file=/tmp/out.pcap -A iso7816
+# xiaomi_phone_sample
+run_test "xiaomi_phone_sample ATR-included" timeout 30 sigrok-cli -i examples/xiaomi_phone_sample.sr -P iso7816:clk=CLK:data=DATA:rst=RST:clock_option=native:protocol=T=0:starts_with_atr=true:gsmtap_enable=false:pcap_file=/tmp/out.pcap -A iso7816
+run_test "xiaomi_phone_sample mid-session" timeout 30 sigrok-cli -i examples/xiaomi_phone_sample.sr -P iso7816:clk=CLK:data=DATA:rst=RST:clock_option=native:protocol=T=0:starts_with_atr=false:gsmtap_enable=false:pcap_file=/tmp/out.pcap -A iso7816
 
 # samsung_phone_sample
 run_test "samsung_phone_sample ATR-included" timeout 30 sigrok-cli -i examples/samsung_phone_sample.sr -P iso7816:clk=CLK:data=DATA:rst=RST:vcc=VCC:clock_option=native:protocol=T=0:starts_with_atr=true:gsmtap_enable=false:pcap_file=/tmp/out.pcap -A iso7816
@@ -78,8 +78,8 @@ echo "--- test_8 ---"
 signal_diag examples/test_8_raw16.sr CLK DATA RST VCC
 echo "--- test_7 ---"
 signal_diag examples/test_7_raw16.sr CLK DATA RST VCC
-echo "--- phone_reference ---"
-signal_diag examples/phone_reference_live_16M.sr CLK DATA RST
+echo "--- xiaomi_phone_sample ---"
+signal_diag examples/xiaomi_phone_sample.sr CLK DATA RST
 echo "--- samsung_phone_sample ---"
 signal_diag examples/samsung_phone_sample.sr CLK DATA RST VCC
 

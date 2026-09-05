@@ -156,7 +156,7 @@ Degradation metrics:
 
 RESULT: OK - capture fully explained (reader + CAT + valid retries)
 
-=== phone_reference ATR-included ===
+=== xiaomi_phone ATR-included ===
 ('iso7816 decoder v1.1.4',)
 ('Invalid TS byte 0xf4 (pre-activation?), resyncing',)
 iso7816-1: Invalid TS byte 0xf4 - skipped
@@ -195,7 +195,7 @@ Degradation metrics:
 
 RESULT: OK - capture fully explained (reader + CAT + valid retries)
 
-=== phone_reference mid-session ===
+=== xiaomi_phone mid-session ===
 ('iso7816 decoder v1.1.4',)
 ('etu recovered (samples):', 53)
 (11673977, 'CHKSUM ERROR: ', 0, 'bits: ', [0, 0, 0, 1, 0, 0, 1, 1, 1, 1])
@@ -458,7 +458,7 @@ RESULT: UNCLEAN - 2 mis-framed capture APDU(s)
     Transitions:  16
     Transitions:  444
     Transitions:  8998
---- phone_reference ---
+--- xiaomi_phone ---
   First activity: sample 11497325
     Frequency:    5.33 MHz
     Period:       3.0 samples

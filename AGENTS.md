@@ -13,7 +13,7 @@ Every change to `pd.py` must be followed by running the full test suite:
 2. **Run all traces in BOTH modes** (ATR-included and mid-session):
    ```bash
    # Run decoder for each trace/mode combination
-   for trace in test_8_raw16 test_7_raw16 phone_reference_live_16M \
+   for trace in test_8_raw16 test_7_raw16 xiaomi_phone_sample \
                samsung_phone_sample; do
        for mode in true false; do
            # Run sigrok-cli and vs_reader as shown below
@@ -66,13 +66,13 @@ sigrok-cli -i examples/test_7_raw16.sr \
   -A iso7816 >/dev/null
 python3 tools/vs_reader.py examples/test_7_reader.log /tmp/out.pcap
 
-# --- phone reference (ATR-included, gated CLK) ---
-sigrok-cli -i examples/phone_reference_live_16M.sr \
+# --- xiaomi phone (ATR-included, gated CLK) ---
+sigrok-cli -i examples/xiaomi_phone_sample.sr \
   -P iso7816:clk=CLK:data=DATA:rst=RST:clock_option=native:protocol=T=0:starts_with_atr=true:gsmtap_enable=false:pcap_file=/tmp/out.pcap \
   -A iso7816 >/dev/null
 
-# --- phone reference (mid-session, gated CLK) ---
-sigrok-cli -i examples/phone_reference_live_16M.sr \
+# --- xiaomi phone (mid-session, gated CLK) ---
+sigrok-cli -i examples/xiaomi_phone_sample.sr \
   -P iso7816:clk=CLK:data=DATA:rst=RST:clock_option=native:protocol=T=0:starts_with_atr=false:gsmtap_enable=false:pcap_file=/tmp/out.pcap \
   -A iso7816 >/dev/null
 
@@ -160,7 +160,7 @@ The edge-read path had two bugs:
 
 #### CLA validation note
 
-All example traces (`test_7`, `test_8`, `phone_reference`, `samsung`)
+All example traces (`test_7`, `test_8`, `xiaomi`, `samsung`)
 contain only CLA `0x00` (interindustry) and `0x8x` (USIM/CAT, mostly `0x80`
 with occasional `0x81` for logical channel 1).
 The decoder must **not** mandate specific CLA values — other CLA values
@@ -222,7 +222,7 @@ Standard interindustry INS values: `A4` (SELECT), `B0` (READ BINARY),
 |-------|-------------|-------------|------------|
 | test_8 | 54 | 54 | ✓ |
 | test_7 | 10 | 10 | ✓ |
-| phone_reference | 0 | 620 | ✓ |
+| xiaomi_phone | 0 | 620 | ✓ |
 | samsung_phone | 2 | 49 | ✓ |
 
 **Note on v1.1.3 fix:** The decoder measures CLK period as an average instead of using the minimum recurring period. This correctly handles traces where CLK periods alternate (e.g., 4,3,3 pattern for ~5.33MHz CLK at 16MHz sample rate). The fix changed `_measure_clock_period()` to use `sum(spacings) / len(spacings)` instead of `_robust_min(spacings)`, giving accurate `spc` values like 3.333... instead of 3. This corrected the `_wait_clk_rising()` skip calculation, fixing the post-ATR byte alignment issue.
