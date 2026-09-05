@@ -28,7 +28,7 @@ from .gsmtap_stream import (GsmtapStreamSender,
     GSMTAP_SIM_RST_EVENT, GSMTAP_SIM_VCC_EVENT,
     GSMTAP_FLAG_BAD_FCS)
 
-VERSION = '1.1.5'
+VERSION = '1.1.6'
 
 
 
@@ -1119,6 +1119,8 @@ class Decoder(srd.Decoder):
         # reject the short inter-byte gap.  Otherwise re-hunt normally.
         if not (self._edge_read and self._start_fall is not None):
             self.wait_data_falling()
+        if self._eof:
+            return None
         return self.read_byte_no_wait()
 
     def peek_byte(self):
@@ -1128,6 +1130,8 @@ class Decoder(srd.Decoder):
             return self.peeked_byte
         if not (self._edge_read and self._start_fall is not None):
             self.wait_data_falling()
+        if self._eof:
+            return None
         self.peeked_samplenum = self._start_fall
         self.peeked_byte = self.read_byte_no_wait()
         return self.peeked_byte
@@ -1717,6 +1721,8 @@ class Decoder(srd.Decoder):
                 return True
 
             firstByte = self.peek_byte();
+            if firstByte is None:
+                return True
             if (firstByte == 0xFF): # PPS Request
                 # Only one PPS attempt is made after an ATR/warm reset.
                 # Idle 0xFF bytes after a failed/no-PPS scenario would
@@ -1766,15 +1772,27 @@ class Decoder(srd.Decoder):
                 # handler re-arm ATR hunt.
                 idle_byte = 0xFF if not self._inverse_convention else 0x00
                 first = self.peek_byte()
+                if first is None:
+                    return True
                 if first == idle_byte:
                     self.peeked_byte = None
                     self._resync = True
                     return True
                 bClass = self.read_byte()
+                if bClass is None:
+                    return True
                 bIns = self.read_byte()
+                if bIns is None:
+                    return True
                 p1 = self.read_byte()
+                if p1 is None:
+                    return True
                 p2 = self.read_byte()
+                if p2 is None:
+                    return True
                 p3 = self.read_byte()
+                if p3 is None:
+                    return True
                 packet.extend((bClass, bIns, p1, p2, p3))
                 # All-zero header is never a valid T=0 command.
                 if all(b == 0 for b in packet[:5]):
@@ -1817,24 +1835,41 @@ class Decoder(srd.Decoder):
                     #     is terminal command data; read P3 command-data bytes,
                     #     then the card's procedure byte (ACK/SW/9x).
                     pb0 = self.read_byte()
+                    if pb0 is None:
+                        return True
                     # Skip NULL (0x60) procedure bytes: the card may send
                     # NULLs while processing before the ACK.  Without this
                     # the NULLs are mis-identified as case-3/4 command data.
-                    while pb0 == 0x60:
+                    for _ in range(MAX_TPDU_LEN):
+                        if pb0 != 0x60:
+                            break
                         pb0 = self.read_byte()
+                        if pb0 is None:
+                            return True
                     if (pb0 == bIns or pb0 == (bIns ^ 0xFF)):
                         # ACK (full match or ~INS): case 2/4 (response data
                         # follows).  Read exactly P3 response bytes, then
                         # scan for SW1 SW2, skipping any turnaround idle
                         # bytes (e.g. 0xFF) between data and SW.
                         for _ in range(p3):
-                            packet.append(self.read_byte())
-                        sw1 = self.read_byte()
-                        while ((sw1 & 0xF0) != 0x60
-                               and (sw1 & 0xF0) != 0x90):
+                            b = self.read_byte()
+                            if b is None:
+                                return True
+                            packet.append(b)
+                        sw1 = None
+                        for _ in range(MAX_TPDU_LEN):
                             sw1 = self.read_byte()
-                        packet.append(sw1)  # SW1
+                            if sw1 is None:
+                                return True
+                            if ((sw1 & 0xF0) == 0x60
+                                    or (sw1 & 0xF0) == 0x90):
+                                break
+                        if sw1 is None:
+                            return True
                         sw2 = self.read_byte()
+                        if sw2 is None:
+                            return True
+                        packet.append(sw1)  # SW1
                         packet.append(sw2)  # SW2
                         got_sw = True
                     else:
@@ -1847,33 +1882,53 @@ class Decoder(srd.Decoder):
                             if ((pb0 & 0xF0) == 0x60
                                     or (pb0 & 0xF0) == 0x90):
                                 # pb0 is SW1: card sent SW directly.
-                                packet.append(self.read_byte())
+                                sw2 = self.read_byte()
+                                if sw2 is None:
+                                    return True
+                                packet.append(sw2)
                                 got_sw = True
                             else:
-                                # pb0 is response data: read until SW.
-                                for _ in range(512):
+                                # pb0 is response data: read until SW,
+                                # skipping turnaround idle bytes.
+                                for _ in range(MAX_TPDU_LEN):
                                     b = self.read_byte()
-                                    packet.append(b)
+                                    if b is None:
+                                        return True
                                     if ((b & 0xF0) == 0x60
                                             or (b & 0xF0) == 0x90):
-                                        packet.append(self.read_byte())
+                                        sw2 = self.read_byte()
+                                        if sw2 is None:
+                                            return True
+                                        packet.append(b)
+                                        packet.append(sw2)
                                         got_sw = True
                                         break
                         else:
                             # Case 3/4: P3 command-data bytes, then
                             # procedure byte.
                             for _ in range(max(p3 - 1, 0)):
-                                packet.append(self.read_byte())
+                                b = self.read_byte()
+                                if b is None:
+                                    return True
+                                packet.append(b)
                             for _proc in range(32):
                                 pb = self.read_byte()
+                                if pb is None:
+                                    return True
                                 if (pb == bIns or pb == (bIns ^ 0xFF)):
-                                    # ACK (full match / ~INS): case 4 -> read response until SW.
-                                    for _ in range(512):
+                                    # ACK (full match / ~INS): case 4 -> read response until SW,
+                                    # skipping turnaround idle bytes.
+                                    for _ in range(MAX_TPDU_LEN):
                                         b = self.read_byte()
-                                        packet.append(b)
+                                        if b is None:
+                                            return True
                                         if ((b & 0xF0) == 0x60
                                                 or (b & 0xF0) == 0x90):
-                                            packet.append(self.read_byte())
+                                            sw2 = self.read_byte()
+                                            if sw2 is None:
+                                                return True
+                                            packet.append(b)
+                                            packet.append(sw2)
                                             got_sw = True
                                             break
                                     break
@@ -1881,7 +1936,10 @@ class Decoder(srd.Decoder):
                                         or pb == ((bIns ^ 0xFF) ^ 0x01)):
                                     # Single-byte match (INS^0x01 / ~INS^0x01):
                                     # read 1 byte, continue handshake.
-                                    packet.append(self.read_byte())
+                                    b = self.read_byte()
+                                    if b is None:
+                                        return True
+                                    packet.append(b)
                                     continue
                                 elif (pb == 0x60):
                                     # NULL: card busy; next procedure byte.
@@ -1890,28 +1948,41 @@ class Decoder(srd.Decoder):
                                     # Extended-length procedure byte: L
                                     # response data bytes follow, then SW.
                                     L = self.read_byte()
+                                    if L is None:
+                                        return True
                                     for _ in range(L):
-                                        packet.append(self.read_byte())
+                                        b = self.read_byte()
+                                        if b is None:
+                                            return True
+                                        packet.append(b)
                                     continue
                                 elif ((pb & 0xF0) == 0x60
                                         or (pb & 0xF0) == 0x90):
                                     # SW1: case 3, no response data.
+                                    sw2 = self.read_byte()
+                                    if sw2 is None:
+                                        return True
                                     packet.append(pb)
-                                    packet.append(self.read_byte())
+                                    packet.append(sw2)
                                     got_sw = True
                                     break
                                 else:
                                     # Unexpected byte: scan for SW,
                                     # skip non-SW bytes (e.g. 0xFF
                                     # turnaround artifacts).
-                                    for _ in range(512):
+                                    for _ in range(MAX_TPDU_LEN):
                                         if ((pb & 0xF0) == 0x60
                                                 or (pb & 0xF0) == 0x90):
+                                            sw2 = self.read_byte()
+                                            if sw2 is None:
+                                                return True
                                             packet.append(pb)
-                                            packet.append(self.read_byte())
+                                            packet.append(sw2)
                                             got_sw = True
                                             break
                                         pb = self.read_byte()
+                                        if pb is None:
+                                            return True
                                     break
                 else:
                     # ATR-based captures (test_8 / test_7): keep the original
@@ -1919,18 +1990,26 @@ class Decoder(srd.Decoder):
                     data_read = False
                     for _proc in range(8):
                         pb = self.read_byte()
+                        if pb is None:
+                            break
                         if (pb == bIns or pb == (bIns ^ 0xFF)) and not data_read:
                             # ACK (full match / ~INS): the P3 bytes follow on
                             # the wire (Lc command data for case 3, Le response
                             # data for case 2).
                             data_read = True
                             for _ in range(p3):
-                                packet.append(self.read_byte())
+                                b = self.read_byte()
+                                if b is None:
+                                    break
+                                packet.append(b)
                         elif (pb == (bIns ^ 0x01)
                                 or pb == ((bIns ^ 0xFF) ^ 0x01)):
                             # Single-byte match (INS^0x01 / ~INS^0x01):
                             # read 1 byte, continue handshake.
-                            packet.append(self.read_byte())
+                            b = self.read_byte()
+                            if b is None:
+                                break
+                            packet.append(b)
                             continue
                         elif (pb == 0x60):
                             # NULL: card busy, wait for the next procedure byte.
@@ -1940,12 +2019,20 @@ class Decoder(srd.Decoder):
                             # L is the number of response data bytes the card
                             # now sends, followed by the status word.
                             L = self.read_byte()
+                            if L is None:
+                                break
                             for _ in range(L):
-                                packet.append(self.read_byte())
+                                b = self.read_byte()
+                                if b is None:
+                                    break
+                                packet.append(b)
                         elif ((pb & 0xF0) == 0x60 or (pb & 0xF0) == 0x90):
                             # SW1: append SW2; the exchange is complete.
+                            sw2 = self.read_byte()
+                            if sw2 is None:
+                                break
                             packet.append(pb)
-                            packet.append(self.read_byte())
+                            packet.append(sw2)
                             got_sw = True
                             break
                         else:

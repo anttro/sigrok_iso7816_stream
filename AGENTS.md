@@ -228,7 +228,7 @@ Standard interindustry INS values: `A4` (SELECT), `B0` (READ BINARY),
 
 ### Versioning
 
-The decoder version is defined in `pd.py` as `VERSION = '1.1.4'`.
+The decoder version is defined in `pd.py` as `VERSION = '1.1.6'`.
 The version is printed to the log on decoder startup.
 
 ### Testing after decoder changes
@@ -526,6 +526,32 @@ discarded ideas.  "Proven" = kept in `pd.py`; "Rejected" = do not re-add.
   Uses F=512/D=32 (16 CLK cycles/bit).  `_measure_etu` correctly measures
   the ETU from DATA edge spacings (after glitch filtering).  Now passes
   with 0 GARBAGE after turnaround-idle fix (v1.1.5).
+- **Samsung phone — concatenated APDUs.**  Multiple T=0 exchanges still
+  appear merged into single pcap packets (e.g. 136–259 byte APDUs containing
+  several `9000`/`61xx` status words).  The v1.1.6 bounded-loop / EOF changes
+  do not resolve this; root cause is under investigation.
+
+### v1.1.6 fix: bounded T=0 loops and explicit EOF handling
+
+Tightened the edge-read T=0 procedure-byte handlers to prevent runaway
+reads and to surface end-of-capture explicitly.
+
+1. **Bounded all "read until SW" / turnaround-skip loops.**  Replaced the
+   unbounded ACK-handler `while` and the open-ended `range(512)` loops with
+   `for _ in range(MAX_TPDU_LEN)`.  Added EOF checks so the decoder returns
+   cleanly at end-of-capture instead of consuming zeros/turnaround bytes
+   indefinitely.
+
+2. **`read_byte()` / `peek_byte()` return `None` on EOF.**  Previously both
+   methods returned `0x00` when the sample stream ended, making it
+   impossible for callers to distinguish real data from padding.  They now
+   return `None`; the T=0 DATA-state header and procedure-byte loops check
+   for `None` and exit the current exchange.
+
+3. **Skip turnaround idle bytes before appending.**  The P3=0 and case-4
+   ACK "read until SW" paths now mirror the v1.1.5 unexpected-byte fix:
+   non-SW bytes (including 0xFF turnaround artifacts) are skipped before
+   the status word is appended, rather than being added to the packet.
 
 ### v1.1.5 fix: turnaround idle bytes in edge-read path
 
