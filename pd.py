@@ -1825,12 +1825,14 @@ class Decoder(srd.Decoder):
                     if (pb0 == bIns or pb0 == (bIns ^ 0xFF)):
                         # ACK (full match or ~INS): case 2/4 (response data
                         # follows).  Read exactly P3 response bytes, then
-                        # SW1 SW2.  P3-bounded reads avoid the "read until
-                        # SW" bug where FCP tag 0x62 is misidentified as
-                        # SW1, truncating GET RESPONSE data.
+                        # scan for SW1 SW2, skipping any turnaround idle
+                        # bytes (e.g. 0xFF) between data and SW.
                         for _ in range(p3):
                             packet.append(self.read_byte())
                         sw1 = self.read_byte()
+                        while ((sw1 & 0xF0) != 0x60
+                               and (sw1 & 0xF0) != 0x90):
+                            sw1 = self.read_byte()
                         packet.append(sw1)  # SW1
                         sw2 = self.read_byte()
                         packet.append(sw2)  # SW2
@@ -1899,11 +1901,13 @@ class Decoder(srd.Decoder):
                                     got_sw = True
                                     break
                                 else:
-                                    # Unexpected byte: scan for SW.
+                                    # Unexpected byte: scan for SW,
+                                    # skip non-SW bytes (e.g. 0xFF
+                                    # turnaround artifacts).
                                     for _ in range(512):
-                                        packet.append(pb)
                                         if ((pb & 0xF0) == 0x60
                                                 or (pb & 0xF0) == 0x90):
+                                            packet.append(pb)
                                             packet.append(self.read_byte())
                                             got_sw = True
                                             break

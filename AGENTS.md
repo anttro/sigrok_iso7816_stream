@@ -524,4 +524,24 @@ discarded ideas.  "Proven" = kept in `pd.py`; "Rejected" = do not re-add.
   command perfectly (expected; the rest of the stream is clean).
 - **Samsung phone — gated CLK, non-default F/D** (`samsung_phone_sample.sr`).
   Uses F=512/D=32 (16 CLK cycles/bit).  `_measure_etu` correctly measures
-  the ETU from DATA edge spacings (after glitch filtering).  Smoke-test only.
+  the ETU from DATA edge spacings (after glitch filtering).  Now passes
+  with 0 GARBAGE after turnaround-idle fix (v1.1.5).
+
+### v1.1.5 fix: turnaround idle bytes in edge-read path
+
+Samsung phone traces with gated CLK had 5 garbage APDUs (BAD_FCS) in
+mid-session mode.  Root cause: two code paths in the edge-read T=0
+procedure-byte handler did not skip turnaround idle bytes (0xFF) on the
+bidirectional DATA line.
+
+1. **ACK handler (case 2/4):** After reading P3 response bytes, the code
+   read 2 raw bytes as SW1 SW2.  For case-3 commands (SELECT with data),
+   the terminal sends command data after ACK, then the DATA line idles
+   (0xFF) before the card sends SW.  The idle 0xFF was mis-identified as
+   SW1.  Fixed by adding a `while` loop that skips non-SW bytes before
+   reading SW1.
+
+2. **"Unexpected byte" handler (procedure byte loop):** Non-SW bytes
+   (e.g. 0xFF turnaround) were appended to the packet before scanning for
+   SW, corrupting the SW position.  Fixed by moving `packet.append(pb)`
+   inside the SW1 check so non-SW bytes are skipped.
