@@ -115,7 +115,10 @@ Override via args:
 ./start.sh --no-rst --no-vcc           # CLK+I/O only
 ./start.sh --host=10.0.28.7            # stream to a remote analyser
 ./start.sh --pcap=session.pcap         # also record decoded events to PCAP
-./start.sh --debug                     # verbose libsigrokdecode logging
+./start.sh --debug                     # full decoder + sigrok output (all
+                                       # annotation rows + libsigrok -l 4);
+                                       # by default only decoded APDUs and
+                                       # decoder warnings/errors are shown
 ```
 
 ### Detecting the wiring (`tools/detect_pins.py`)
@@ -192,7 +195,9 @@ is the usual suspect.
 ./start.sh --pcap=s.pcap --log=s.log           # also record decoded events, log rc=
 ./start.sh ... --samplerate=24M                # more timing headroom if needed
 ./start.sh ... --klog                          # also record kernel journal
-./start.sh ... --debug                         # libsigrok internals at -l 4
+./start.sh ... --debug                         # full output: all annotation rows
+                                               # + libsigrok internals at -l 4
+                                               # (default: APDUs + warnings only)
 ```
 
 `start.sh` captures a continuous stream at the configured rate (default 16

@@ -14,6 +14,7 @@ set "HOST=127.0.0.1"
 set "PORT=4729"
 set "PCAP="
 set "DEBUG="
+set "ANNOT=iso7816=apdus,iso7816=warnings"
 
 :argloop
 if "%~1"=="" goto :argsdone
@@ -26,7 +27,7 @@ if /i "%~1"=="--clock"       ( set "CLOCK=%~2"       & shift & shift & goto :arg
 if /i "%~1"=="--host"        ( set "HOST=%~2"        & shift & shift & goto :argloop )
 if /i "%~1"=="--port"        ( set "PORT=%~2"        & shift & shift & goto :argloop )
 if /i "%~1"=="--pcap"        ( set "PCAP=%~2"        & shift & shift & goto :argloop )
-if /i "%~1"=="--debug"       ( set "DEBUG=1"         & shift & goto :argloop )
+if /i "%~1"=="--debug"       ( set "DEBUG=1"         & set "ANNOT=iso7816" & shift & goto :argloop )
 if /i "%~1"=="--no-rst"      ( set "RST="            & shift & goto :argloop )
 if /i "%~1"=="--no-vcc"      ( set "VCC="            & shift & goto :argloop )
 if /i "%~1"=="-h"            ( goto :usage )
@@ -45,7 +46,9 @@ echo   --clock=MODE      native/detect/sample_as_clock
 echo   --host=IP         GSMTAP destination default: 127.0.0.1
 echo   --port=N          GSMTAP port        default: 4729
 echo   --pcap=FILE       Also write decoded events to FILE (no spaces in path)
-echo   --debug           Verbose libsigrokdecode logging (-l 4)
+echo   --debug           Full decoder + sigrok output (all annotation rows + -l 4).
+echo
+echo   By default only decoded APDUs and decoder warnings/errors are shown.
 echo   --no-rst          Disable RST tracking
 echo   --no-vcc          Disable VCC tracking
 echo.
@@ -87,7 +90,7 @@ if defined PCAP set "OPTS=%OPTS%:pcap_file=%PCAP%"
 
 set "CMDLINE=sigrok-cli -d fx2lafw --config samplerate=%SAMPLERATE% --continuous -C D0,D1,D2,D3,D4,D5,D6,D7"
 if defined DEBUG set "CMDLINE=%CMDLINE% -l 4"
-set "CMDLINE=%CMDLINE% -P iso7816:%OPTS% -A iso7816"
+set "CMDLINE=%CMDLINE% -P iso7816:%OPTS% -A %ANNOT%"
 
 echo ISO 7816 streamer - clk=%CLK% data=%DATA% clock=%CLOCK%
 if defined RST echo   RST tracking on channel %RST%

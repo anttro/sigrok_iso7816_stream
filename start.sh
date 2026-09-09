@@ -12,6 +12,7 @@ HOST=127.0.0.1
 PORT=4729
 PCAP=""
 DEBUG=""
+ANNOT="iso7816=apdus,iso7816=warnings"   # default: decoded APDUs + warnings only
 LOG=""
 KLOG=""
 LOOP=0              # --loop: restart on rc=0 (device stopped streaming)
@@ -52,7 +53,9 @@ Options:
   --host=IP         GSMTAP destination (default: ${HOST})
   --port=N          GSMTAP port        (default: ${PORT})
   --pcap=FILE       Also write decoded events to FILE (offline analysis)
-  --debug           Verbose libsigrokdecode logging (-l 4)
+  --debug           Full decoder + sigrok output: all annotation rows and
+                    verbose libsigrokdecode logging (-l 4).  By default only
+                    decoded APDUs and decoder warnings/errors are shown.
   --log=FILE        Tee all output into FILE (postmortem / exit diagnosis)
   --klog[=FILE]     Also record the kernel journal (journalctl -kf) to
                     FILE (default: klog.log) -- needs journal read
@@ -106,7 +109,7 @@ for arg in "$@"; do
         --host=*)        HOST="${arg#*=}" ;;
         --port=*)        PORT="${arg#*=}" ;;
         --pcap=*)        PCAP="${arg#*=}" ;;
-        --debug)         DEBUG=1 ;;
+        --debug)         DEBUG=1; ANNOT="iso7816" ;;
         --log=*)         LOG="${arg#*=}" ;;
         --klog)          KLOG="klog.log" ;;
         --klog=*)        KLOG="${arg#*=}" ;;
@@ -250,7 +253,7 @@ run_once() {
         -C 'D0,D1,D2,D3,D4,D5,D6,D7' \
         ${DEBUG:+-l 4} \
         -P "iso7816:${OPTS}${pcap_opt}" \
-        -A iso7816 < "${FIFO}" | tee "${ANNOT_TMP}"
+        -A "${ANNOT}" < "${FIFO}" | tee "${ANNOT_TMP}"
     local rc=${PIPESTATUS[0]}
     kill "${FIFO_PID}" 2>/dev/null || true
     rm -f "${FIFO}" 2>/dev/null || true
