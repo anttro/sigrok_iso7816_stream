@@ -1,0 +1,5 @@
+# Batch scripts require CRLF
+*.bat text eol=crlf
+*.cmd text eol=crlf
+# Keep shell scripts LF
+*.sh text eol=lf

@@ -1,0 +1,6 @@
+*.pcap
+*.log
+__pycache__/
+
+# Trace fixtures are local-only (large, machine-specific); never tracked.
+examples/
