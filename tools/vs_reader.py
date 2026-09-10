@@ -380,12 +380,26 @@ def main():
         print('\nWARNING: capture contains 0 APDUs but reader log has %d exchange(s).'
               % len(reader))
 
-    ok = (len(pcap_garbage) == 0 and not no_apdu_failure)
-    print('\nRESULT: %s' % ('OK - capture fully explained (reader + CAT + valid retries)'
-                            if ok else
-                            'UNCLEAN - %d mis-framed capture APDU(s)%s'
-                            % (len(pcap_garbage),
-                               ', 0 capture APDUs' if no_apdu_failure else '')))
+    ok = (len(pcap_garbage) == 0
+          and len(concat_indices) == 0
+          and len(payload_mismatches) == 0
+          and len(suspicious_cla) == 0
+          and not no_apdu_failure)
+    if ok:
+        print('\nRESULT: OK - capture fully explained (reader + CAT + valid retries)')
+    else:
+        problems = []
+        if pcap_garbage:
+            problems.append('%d garbage APDU(s)' % len(pcap_garbage))
+        if concat_indices:
+            problems.append('%d CONCAT packet(s)' % len(concat_indices))
+        if payload_mismatches:
+            problems.append('%d payload mismatch(es)' % len(payload_mismatches))
+        if suspicious_cla:
+            problems.append('%d suspicious CLA' % len(suspicious_cla))
+        if no_apdu_failure:
+            problems.append('0 capture APDUs')
+        print('\nRESULT: UNCLEAN - %s' % ', '.join(problems))
     sys.exit(0 if ok else 1)
 
 

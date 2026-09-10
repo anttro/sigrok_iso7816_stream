@@ -189,6 +189,7 @@ check_dup clk  "${CLK}"  rst  "${RST}"
 check_dup clk  "${CLK}"  vcc  "${VCC}"
 check_dup data "${DATA}" rst  "${RST}"
 check_dup data "${DATA}" vcc  "${VCC}"
+check_dup rst  "${RST}"  vcc  "${VCC}"
 
 echo "Channels: clk=${CLK} data=${DATA}${RST:+ rst=${RST}}${VCC:+ vcc=${VCC}}"
 

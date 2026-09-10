@@ -20,7 +20,6 @@ import struct
 import sys
 import time
 import codecs
-import ctypes
 import traceback
 from collections import deque
 
@@ -450,7 +449,6 @@ class Decoder(srd.Decoder):
         # card was already in reset" indistinguishable from a live session.
         self._primed = False
         self.lastSamplePositive = True
-        self.sampleOverflowCount = 0
         # Rolling parity-error monitor: warns when the wire degrades
         # (e.g. GSM TX bursts coupling into the probe wiring).
         self.parity_hist = deque(maxlen=64)
@@ -755,9 +753,12 @@ class Decoder(srd.Decoder):
             self.wrote_pcap_header = True
     
     def ts_from_samplenum(self, sample):
-        x = ctypes.c_uint32(sample).value;
-        ovrflow = ctypes.c_uint32(int(self.sampleOverflowCount * 0xFFFFFFFF * self.secs_per_sample)).value
-        ts = float(x) * self.secs_per_sample + ovrflow + self._pcap_base_time
+        # Use the full sample number.  The previous c_uint32 truncation (plus
+        # an overflow counter that was never incremented) made pcap timestamps
+        # wrap and go backwards once a capture passed 2^32 samples (~4.5 min
+        # at 16 MHz).  float64 holds sample numbers well past 2^53, so the
+        # whole sample domain is representable.
+        ts = float(sample) * self.secs_per_sample + self._pcap_base_time
         return (int(ts), int((ts % 1.0) * 1e6))
 
     def signal_quality(self, err):
@@ -1556,6 +1557,10 @@ class Decoder(srd.Decoder):
             self.put(atr_start, self.samplenum, self.out_ann,
                      [Ann.ANN_WARN, ["Invalid TS byte 0x{byte:02x} - skipped".format(byte=byte)]])
             byte = self.read_byte()
+            if byte is None:
+                # End of capture mid-hunt: stop cleanly instead of raising
+                # TypeError (None & 0x80) in the next loop iteration.
+                return
             atr_start = self.ss
             ts_attempts += 1
         if (byte not in (0x3b, 0x3f)):
@@ -1599,6 +1604,8 @@ class Decoder(srd.Decoder):
             ts=byte, conv="inverse" if self._inverse_convention else "direct"))
 
         t0 = self.read_byte()
+        if t0 is None:
+            return
         self.ATR.append(t0)
         # Lock ETU from the first two ATR bytes (TS + T0).  The ATR is sent
         # at the default ETU, so its edge spacings are the authoritative

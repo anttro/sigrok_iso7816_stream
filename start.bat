@@ -1,6 +1,7 @@
 @echo off
 rem sigrok_iso7816_stream launcher (Windows): capture ISO 7816 and stream
-rem GSMTAP to :4729.  Flag-for-flag equivalent of start.sh.
+rem GSMTAP to :4729.  Mirrors the core start.sh flags (channel/samplerate/
+rem clock/gsmtap/pcap/protocol/debug); start.sh has the full flag set.
 
 setlocal EnableExtensions EnableDelayedExpansion
 
@@ -15,6 +16,7 @@ set "PORT=4729"
 set "PCAP="
 set "DEBUG="
 set "ANNOT=iso7816=apdus,iso7816=warnings"
+set "PROTOCOL=T=0"
 
 :argloop
 if "%~1"=="" goto :argsdone
@@ -28,6 +30,7 @@ if /i "%~1"=="--host"        ( set "HOST=%~2"        & shift & shift & goto :arg
 if /i "%~1"=="--port"        ( set "PORT=%~2"        & shift & shift & goto :argloop )
 if /i "%~1"=="--pcap"        ( set "PCAP=%~2"        & shift & shift & goto :argloop )
 if /i "%~1"=="--debug"       ( set "DEBUG=1"         & set "ANNOT=iso7816" & shift & goto :argloop )
+if /i "%~1"=="--protocol"    ( set "PROTOCOL=%~2"    & shift & shift & goto :argloop )
 if /i "%~1"=="--no-rst"      ( set "RST="            & shift & goto :argloop )
 if /i "%~1"=="--no-vcc"      ( set "VCC="            & shift & goto :argloop )
 if /i "%~1"=="-h"            ( goto :usage )
@@ -49,6 +52,7 @@ echo   --pcap=FILE       Also write decoded events to FILE (no spaces in path)
 echo   --debug           Full decoder + sigrok output (all annotation rows + -l 4).
 echo
 echo   By default only decoded APDUs and decoder warnings/errors are shown.
+echo   --protocol=MODE   T=0 (default), T=1, or auto (mid-session decode)
 echo   --no-rst          Disable RST tracking
 echo   --no-vcc          Disable VCC tracking
 echo.
@@ -82,11 +86,17 @@ exit /b 1
 
 :found
 
+rem Normalize --protocol to the decoder's accepted form (T=0 / T=1 / auto).
+if /i "%PROTOCOL%"=="T0"   set "PROTOCOL=T=0"
+if /i "%PROTOCOL%"=="T1"   set "PROTOCOL=T=1"
+if /i "%PROTOCOL%"=="AUTO" set "PROTOCOL=auto"
+
 set "OPTS=clk=%CLK%:data=%DATA%:clock_option=%CLOCK%"
 set "OPTS=%OPTS%:gsmtap_host=%HOST%:gsmtap_port=%PORT%"
 if defined RST set "OPTS=%OPTS%:rst=%RST%:rst_detect=true"
 if defined VCC set "OPTS=%OPTS%:vcc=%VCC%:vcc_detect=true"
 if defined PCAP set "OPTS=%OPTS%:pcap_file=%PCAP%"
+set "OPTS=%OPTS%:protocol=%PROTOCOL%"
 
 set "CMDLINE=sigrok-cli -d fx2lafw --config samplerate=%SAMPLERATE% --continuous -C D0,D1,D2,D3,D4,D5,D6,D7"
 if defined DEBUG set "CMDLINE=%CMDLINE% -l 4"

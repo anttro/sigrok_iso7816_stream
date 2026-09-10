@@ -106,10 +106,12 @@ for %%r in (1M 2M 4M 8M 12M 16M 20M 24M) do (
         -P "iso7816:clk=D0:data=D1" >"%TEMP%\iso7816-probe.txt" 2>&1
     type "%TEMP%\iso7816-probe.txt" | findstr /c:"Unable to claim" >nul && (
         echo blocked - another program holds the device
+        set "DEVICE_MSG=1"
         goto :probedone
     )
     type "%TEMP%\iso7816-probe.txt" | findstr /c:"Failed to open" /c:"No devices found" >nul && (
         echo skipped - no FX2 device connected
+        set "DEVICE_MSG=1"
         goto :probedone
     )
     type "%TEMP%\iso7816-probe.txt" | findstr /r /c:"invalid argument" /c:"Unable to sample" /c:"Could not start" >nul || set MAX_RATE=%%r
