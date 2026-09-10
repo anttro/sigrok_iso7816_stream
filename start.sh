@@ -12,6 +12,9 @@ HOST=127.0.0.1
 PORT=4729
 PCAP=""
 DEBUG=""
+# Annotation rows to show.  The comma-separated "decoder=row,decoder=row"
+# multi-spec form is sigrok-cli 0.7.x syntax (verified 0.7.2); newer
+# sigrok-cli uses a different row selector, so pin this if upgrading.
 ANNOT="iso7816=apdus,iso7816=warnings"   # default: decoded APDUs + warnings only
 LOG=""
 KLOG=""

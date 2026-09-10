@@ -41,6 +41,11 @@ class Ann:
 
 
 class pcap_udp_pkt():
+    # GSMTAP-SIM wrapped in a synthetic Ethernet/IP/UDP header so the binary
+    # output dissects as a UDP stream in Wireshark.  The IPv4 header checksum
+    # is left 0 and the endpoints are fixed loopback + the default GSMTAP
+    # ports on purpose: Wireshark tolerates the zero checksum and the values
+    # are only cosmetic.  Field bytes are patched in set_data() below.
     # GSM TAP
     h  = b''
 
@@ -779,6 +784,8 @@ class Decoder(srd.Decoder):
                 wes = max(self.es, wss + 1)
                 self.put(wss, wes, self.out_ann,
                          [Ann.ANN_WARN, ["noisy signal"]])
+            except SystemError:
+                raise
             except Exception:
                 pass
         elif errs <= 2:
@@ -800,9 +807,9 @@ class Decoder(srd.Decoder):
         hard-coded 3× approximation and gives the correct ETU for the ATR and
         for any post-PPS speed.  Returns True if a stable period was found.
 
-        Collects multiple CLK rising-edge spacings and picks the smallest
-        recurring one (like _robust_min) so a single glitch does not skew the
-        result.'''
+        Collects multiple CLK rising-edge spacings and averages them, which
+        handles CLK periods that alternate between samples (e.g. a 4,3,3
+        pattern for ~5.33 MHz at 16 MHz sample rate).'''
         if self.sample_as_clock or self.detect_clock:
             return False
         spacings = []
@@ -826,6 +833,8 @@ class Decoder(srd.Decoder):
                 self._samples_per_clock = period
                 self.log("clock period (samples):", period)
                 return True
+        except SystemError:
+            raise
         except Exception:
             pass
         return False
@@ -936,22 +945,6 @@ class Decoder(srd.Decoder):
         # every byte from here on.
         self._edge_read = True
         self.log("etu recovered (samples):", self.bit_samples)
-
-    def _lock_etu_from_edges(self, min_spacings=6):
-        '''Lock the ETU from the most recent DATA edge spacings.
-
-        Used after the first few bytes of an ATR (which provide a clean,
-        contiguous burst at the default ETU) to derive the actual bit period
-        so the rest of the session is decoded at the correct speed.'''
-        if len(self._edge_spacings) < min_spacings:
-            return
-        spacings = list(self._edge_spacings)
-        etu = self._robust_min(spacings)
-        if 4 <= etu <= 100000:
-            self.bit_samples = etu
-            self._etu_confirm_count = 3  # lock immediately
-            self._etu_fail_count = 0
-            self.log("ETU locked from ATR edges:", etu)
 
     def _confirm_etu(self, parity_ok):
         '''Validate ETU measurement after _measure_etu.  Call after each byte
@@ -1168,6 +1161,8 @@ class Decoder(srd.Decoder):
                 try:
                     self.put(self.ss, self.samplenum, self.out_ann,
                              [Ann.ANN_WARN, ["I/O stuck low?"]])
+                except SystemError:
+                    raise
                 except Exception:
                     pass
         else:
@@ -1277,6 +1272,8 @@ class Decoder(srd.Decoder):
                 try:
                     self.put(self.ss, self.samplenum, self.out_ann,
                              [Ann.ANN_WARN, ["I/O stuck low?"]])
+                except SystemError:
+                    raise
                 except Exception:
                     pass
         else:
@@ -1439,6 +1436,8 @@ class Decoder(srd.Decoder):
                     try:
                         self.put(self.ss, self.samplenum, self.out_ann,
                                  [Ann.ANN_WARN, ["I/O stuck low?"]])
+                    except SystemError:
+                        raise
                     except Exception:
                         pass
             else:
@@ -1607,12 +1606,6 @@ class Decoder(srd.Decoder):
         if t0 is None:
             return
         self.ATR.append(t0)
-        # Lock ETU from the first two ATR bytes (TS + T0).  The ATR is sent
-        # at the default ETU, so its edge spacings are the authoritative
-        # timing reference for the rest of the session (until PPS changes it).
-        # Temporarily disabled: measurement is unstable on some captures.
-        # if self.bit_samples is None:
-        #     self._lock_etu_from_edges(min_spacings=6)
 
         firstT0 = t0
 
@@ -1689,7 +1682,7 @@ class Decoder(srd.Decoder):
         # averaging; reset to 372 so PPS (also at the default rate) is
         # read at the correct bit boundary.
         self.clock_skip = 372
-        # Also lock bit_samples so the mid-session re-measure (line 1633)
+        # Also lock bit_samples so the mid-session re-measure in decode_step
         # does not re-run and overwrite clock_skip=372 with a wrong value
         # derived from pre-ATR edge spacings.  _confirm_etu() may have
         # cleared bit_samples during ATR hunt (parity failures on noise),
@@ -1979,12 +1972,10 @@ class Decoder(srd.Decoder):
             # Find the first frame (sample-based, gating-immune) and hand it
             # to the ATR hunter.  RST/VCC edges are still serviced inside
             # wait_data_falling via track_rst/track_vcc.
-            while True:
-                byte = self.read_first_byte()
-                self.peeked_byte = byte
-                self.peeked_samplenum = self.ss
-                self.handle_atr(self.wait({'skip': 0}))
-                break
+            byte = self.read_first_byte()
+            self.peeked_byte = byte
+            self.peeked_samplenum = self.ss
+            self.handle_atr(self.wait({'skip': 0}))
         elif self.state == 'DATA':
             packet = [];
 
@@ -2487,6 +2478,8 @@ class Decoder(srd.Decoder):
                         wes = max(self.es, wss + 1)
                         self.put(wss, wes, self.out_ann,
                                  [Ann.ANN_WARN, ["decode error, resynced"]])
+                    except SystemError:
+                        raise
                     except Exception:
                         pass
                     self.state = 'DATA'

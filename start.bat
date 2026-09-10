@@ -15,6 +15,7 @@ set "HOST=127.0.0.1"
 set "PORT=4729"
 set "PCAP="
 set "DEBUG="
+rem Annotation rows (multi-spec form is sigrok-cli 0.7.x syntax; pin on upgrade)
 set "ANNOT=iso7816=apdus,iso7816=warnings"
 set "PROTOCOL=T=0"
 

@@ -143,7 +143,8 @@ class TestValidateT0Apdu(unittest.TestCase):
         # messaging 0x0C, chaining 0x10, and the SM/structural 0x4x/0x5x.
         for cla in (0x01, 0x02, 0x03, 0x0C, 0x10, 0x14, 0x44, 0x50, 0x54):
             pkt = bytes([cla, 0xa4, 0x00, 0x04, 0x00, 0x90, 0x00])
-            self._valid(pkt), 'CLA=0x%02x' % cla
+            with self.subTest(cla=cla):
+                self._valid(pkt)
 
     def test_valid_cla_channel1_select_after_manage_channel(self):
         # The command that follows MANAGE CHANNEL (00 70 00 00 01) opening

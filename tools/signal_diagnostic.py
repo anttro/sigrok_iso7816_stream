@@ -3,15 +3,18 @@
 
 Reads a sigrok .sr file and reports per-signal measurements:
   CLK  — frequency, duration, frequency changes
-  RST  — transitions, stability (noisy = ignore)
-  VCC  — transitions, stability (noisy = ignore)
+  RST  — transitions, stability (noisy = drop RST tracking via --no-rst)
+  VCC  — transitions, stability (noisy = drop VCC tracking via --no-vcc)
   DATA — oscillations, correlation with CLK
 
 Usage:
-  python3 tools/signal_diagnostic.py trace.sr [--clk CLK] [--data DATA] [--rst RST] [--vcc VCC]
+  python3 tools/signal_diagnostic.py trace.sr [--clk CLK] [--data DATA] [--rst RST] [--vcc VCC] [--max-samples N]
 
 Channel names must match the probe names in the .sr metadata
 (e.g. CLK, DATA, RST, VCC or D0, D1, etc.).
+
+The whole capture is held in memory at once (a 16 MHz capture is ~16 MB per
+second), so use --max-samples to bound RAM on large traces.
 """
 
 import argparse
@@ -54,13 +57,26 @@ def parse_sr_metadata(path):
     return info
 
 
-def read_sr_all(path):
-    """Read all logic samples into a numpy uint8 array."""
+def read_sr_all(path, max_samples=None):
+    """Read logic samples into a numpy uint8 array.
+
+    The whole capture is held in memory at once, so a multi-hundred-MB .sr
+    file costs roughly as many bytes of RAM (plus transient diff buffers).
+    Pass max_samples to bound it; samples beyond the cap are discarded and
+    the returned tuple's second element is True."""
     with zipfile.ZipFile(path, 'r') as zf:
         chunk_names = [n for n in zf.namelist() if n.startswith('logic-1-')]
         chunk_names.sort(key=lambda n: int(n.split('-')[-1]))
-        chunks = [zf.read(c) for c in chunk_names]
-    return np.frombuffer(b''.join(chunks), dtype=np.uint8)
+        buf = bytearray()
+        truncated = False
+        for c in chunk_names:
+            buf.extend(zf.read(c))
+            if max_samples is not None and len(buf) >= max_samples:
+                truncated = True
+                break
+        if max_samples is not None and len(buf) > max_samples:
+            del buf[max_samples:]
+    return np.frombuffer(bytes(buf), dtype=np.uint8), truncated
 
 
 def get_channel_bit(metadata, channel_name):
@@ -159,7 +175,8 @@ def measure_data_fast(data_arr, clk_arr, sr):
 # Main
 # ---------------------------------------------------------------------------
 
-def run_analysis(path, clk_name, data_name, rst_name, vcc_name):
+def run_analysis(path, clk_name, data_name, rst_name, vcc_name,
+                 max_samples=None):
     """Run full signal analysis on a .sr file. Returns results dict."""
     meta = parse_sr_metadata(path)
     sr = meta['samplerate']
@@ -169,7 +186,7 @@ def run_analysis(path, clk_name, data_name, rst_name, vcc_name):
     rst_bit = get_channel_bit(meta, rst_name)
     vcc_bit = get_channel_bit(meta, vcc_name)
 
-    raw = read_sr_all(path)
+    raw, truncated = read_sr_all(path, max_samples)
     total_samples = len(raw)
     duration_s = total_samples / sr
 
@@ -185,6 +202,7 @@ def run_analysis(path, clk_name, data_name, rst_name, vcc_name):
         'samplerate_mhz': sr / 1e6,
         'total_samples': total_samples,
         'duration_ms': duration_s * 1000,
+        'truncated': truncated,
         'channels_found': {
             'CLK': clk_name if clk_bit is not None else None,
             'DATA': data_name if data_bit is not None else None,
@@ -240,6 +258,9 @@ def print_results(results):
     print(f"  Sample rate:    {results['samplerate_mhz']:.1f} MHz")
     print(f"  Samples:        {results['total_samples']}")
     print(f"  Duration:       {results['duration_ms']:.1f} ms")
+    if results.get('truncated'):
+        print(f"  Note:           capture truncated at {results['total_samples']} "
+              f"samples (--max-samples)")
     found = results['channels_found']
     print(f"  Channels:       CLK={found['CLK']} DATA={found['DATA']} RST={found['RST']} VCC={found['VCC']}")
     if results.get('first_activity_sample', 0) > 0:
@@ -266,7 +287,7 @@ def print_results(results):
         print(f"    Transitions:  {rst['transitions']}")
         print(f"    Stable:       {rst['stable_pct']:.1f}%")
         if rst['noisy']:
-            print(f"    WARNING:      noisy (>{1}% transitions) — consider --rst=ignore")
+            print(f"    WARNING:      noisy (>{1}% transitions) — consider start.sh --no-rst")
     else:
         print(f"    Not present:  {rst.get('reason', 'n/a')}")
 
@@ -277,7 +298,7 @@ def print_results(results):
         print(f"    Transitions:  {vcc['transitions']}")
         print(f"    Stable:       {vcc['stable_pct']:.1f}%")
         if vcc['noisy']:
-            print(f"    WARNING:      noisy (>{1}% transitions) — consider --vcc=ignore")
+            print(f"    WARNING:      noisy (>{1}% transitions) — consider start.sh --no-vcc")
     else:
         print(f"    Not present:  {vcc.get('reason', 'n/a')}")
 
@@ -300,9 +321,12 @@ def main():
     parser.add_argument('--data', default='DATA', help='DATA channel name (default: DATA)')
     parser.add_argument('--rst', default='RST', help='RST channel name (default: RST)')
     parser.add_argument('--vcc', default='VCC', help='VCC channel name (default: VCC)')
+    parser.add_argument('--max-samples', type=int, default=None,
+                        help='cap samples read (bounds RAM on large captures)')
     args = parser.parse_args()
 
-    results = run_analysis(args.sr_file, args.clk, args.data, args.rst, args.vcc)
+    results = run_analysis(args.sr_file, args.clk, args.data, args.rst, args.vcc,
+                           args.max_samples)
     print(f"Signal diagnostic: {args.sr_file}")
     print_results(results)
 
