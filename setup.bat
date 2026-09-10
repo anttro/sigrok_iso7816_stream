@@ -84,20 +84,6 @@ if errorlevel 1 (
 )
 echo [ok] %LINK% -^> listed by sigrok-cli
 
-rem ---- python / numpy (for tools\detect_pins.py) ------------------------
-echo Checking Python + numpy...
-set "PY="
-py -3 --version >nul 2>&1 && set "PY=py -3"
-if not defined PY (
-    python --version >nul 2>&1 && set "PY=python"
-)
-if defined PY (
-    for /f "delims=" %%v in ('!PY! --version 2^>^&1') do echo [ok] %%v
-    !PY! -c "import numpy" >nul 2>&1 || echo [!] numpy missing: run '!PY! -m pip install numpy'
-) else (
-    echo [!] no python launcher found; detect_pins.py needs Python 3.8+ and numpy
-)
-
 rem ---- hardware samplerate probe ---------------------------------------
 echo Probing device samplerates...
 set "MAX_RATE="
@@ -126,6 +112,5 @@ if defined MAX_RATE (
 echo.
 echo Done. Next steps:
 echo   1. Plug GND first and verify contact manually (see README).
-echo   2. tools\detect_pins.py   -- find the wiring
-echo   3. start.bat              -- capture + GSMTAP stream
+echo   2. start.bat              -- capture + GSMTAP stream
 endlocal

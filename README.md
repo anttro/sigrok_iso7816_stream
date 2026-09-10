@@ -121,29 +121,18 @@ Override via args:
                                        # decoder warnings/errors are shown
 ```
 
-### Detecting the wiring (`tools/detect_pins.py`)
+### Wiring
 
-Not sure which FX2 channel carries which SIM signal? The probe loops
-short captures until the wiring map is complete:
+The recommended tap is the short cable with external pull resistors (see
+the photos above): 10 kΩ to GND on VCC (pulls low when off) and 47 kΩ to
+VCC on DATA (faster rise to high).  Its pin mapping is **fixed and known
+in advance** — see the "Pin mapping" table below — and is exactly what
+`start.sh` defaults to (`D5`=CLK, `D0`=I/O, `D4`=RST, `D2`=VCC).  No
+wiring auto-detection is needed; the pins never move.
 
-```bash
-python3 tools/detect_pins.py              # live probe (default): trigger a
-                                          # SIM reset when prompted
-python3 tools/detect_pins.py capture.sr   # or analyze an existing capture
-```
-
-Each segment fingerprints every channel (toggle rate, idle level, median
-inter-transition gap, first-rise ordering across VCC -> RST -> ATR).
-Ambiguous static lines are reported as such instead of guessed; the run
-ends with the detected mapping and a ready-to-paste `start.sh` command
-line -- partial mappings still print usable flags for the known channels.
-Requires numpy.
-
-> **GND is not detectable.** It carries no signal to fingerprint, so the
-> tool cannot find or verify it.  Plug it first and check it manually
-> (continuity meter or known-good contact) -- a missing or loose ground
-> masquerades as every other fault at once: floating lines, phantom
-> start bits, all-zero frames.
+> **GND first.** Plug GND first and verify it manually (continuity meter
+> or known-good contact) — a missing or loose ground masquerades as every
+> other fault at once: floating lines, phantom start bits, all-zero frames.
 
 ### Robustness against noisy signals
 
@@ -272,9 +261,10 @@ sigrok-cli -i capture.sr -P iso7816:clk=2:data=0 -B iso7816=pcap > out.pcap
 
 ### Pin mapping
 
-The FX2 clone channels are assigned via `-P iso7816:clk=N:data=N:rst=N:vcc=N`
-(no re-plugging needed when wires are mixed up). Default tap wiring used by
-`start.sh`:
+The FX2 clone channels are assigned via `-P iso7816:clk=N:data=N:rst=N:vcc=N`.
+The recommended short-cable tap (external pull resistors) uses fixed pins that
+are exactly `start.sh`'s defaults; `--clk`/`--data`/`--rst`/`--vcc` remap them
+if you wire differently:
 
 | FX2 channel | SIM contact | Signal |
 |-------------|-------------|--------|
@@ -317,14 +307,12 @@ samplerate.
 
 Prerequisites:
 
-1. **Python 3.8+** from python.org ("Add to PATH" during install), then:
-   `pip install numpy`
-2. **sigrok-cli** Windows installer (0.7.2 x86_64) from
+1. **sigrok-cli** Windows installer (0.7.2 x86_64) from
    [sigrok.org/wiki/Downloads](https://sigrok.org/wiki/Downloads).
    If it fails to start with error `0xc0150002`, install the
    [Visual C++ 2010 Redistributable](https://www.microsoft.com/en-us/download/details.aspx?id=26999)
    (`msvcr100.dll` is required by the bundled Python runtime).
-3. fx2lafw firmware ships bundled with the installer — no separate download.
+2. fx2lafw firmware ships bundled with the installer — no separate download.
 
 Driver setup (FX2 dongles need WinUSB, the vendor driver won't work):
 
@@ -347,13 +335,12 @@ setup.bat
 
 `setup.bat` verifies sigrok-cli and bundled firmware, registers this repo's
 decoder via a junction into `%LOCALAPPDATA%\libsigrokdecode\decoders\iso7816`
-(confirmed by `sigrok-cli -L` listing `iso7816`), checks Python/numpy for
-`tools\detect_pins.py`, and probes the device's accepted samplerates.
+(confirmed by `sigrok-cli -L` listing `iso7816`), and probes the device's
+accepted samplerates.
 
 Capture works the same as on Linux:
 
 ```bat
-tools\detect_pins.py        rem find the wiring (loops segments until done)
 start.bat                   rem capture + GSMTAP stream
 ```
 
