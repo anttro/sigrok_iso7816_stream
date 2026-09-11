@@ -304,6 +304,29 @@ Known limitation: no on-disk fixture reproduces the exact live failure (all
 real captures contain a 372 ATR), so end-to-end proof needs a re-captured
 `.sr` from the failing phone; the unit tests cover the loop-escape logic.
 
+### v1.7.1: accept EOFError as clean end-of-stream (newer libsigrokdecode)
+
+Newer libsigrokdecode signals end-of-capture from `wait()` by raising
+`EOFError("samples exhausted")`; the 0.5.3 build on the Linux dev box instead
+returns `None` / raises `SystemError`, so this only showed up on Windows (a
+newer libsigrokdecode).  The framework explicitly accepts `EOFError` out of
+`decode()` as normal termination (`instance.c`: "Termination with an
+EOFError exception is accepted"), but our `decode()` caught it in the generic
+`except Exception` handler, printing a traceback, logging `DECODE ERROR`, and
+resyncing -- retrying up to 50 times and flooding the log (looked like a
+crash) at the end of every capture.
+
+- `decode()` and the five `except SystemError: raise` guards now use
+  `except (SystemError, EOFError): raise`, so the end-of-stream signal
+  propagates and libsigrokdecode terminates cleanly.  The critical guard is
+  `_measure_clock_period()`, whose `try` wraps a `wait()` loop.
+- 2 new unit tests assert `decode()` re-raises `EOFError` and `SystemError`.
+- 67/67 unit tests.  VERSION -> 1.7.1.
+
+Deployment note: the Windows decoder is a git clone, so `git pull` there
+(and deleting `__pycache__`) picks this up; the EOF error cannot be
+reproduced against Linux 0.5.3.
+
 ### v1.7.0: spurious end-of-decode hardening + start.sh session resilience
 
 A live capture could end without Ctrl+C (the session simply stopped).  The
@@ -607,7 +630,7 @@ official gsmtap.h reserves — a simtrace2-sniff convention.
 
 ### Versioning
 
-The decoder version is defined in `pd.py` as `VERSION = '1.7.0'`.
+The decoder version is defined in `pd.py` as `VERSION = '1.7.1'`.
 The version is printed to the log on decoder startup.
 
 ### Testing after decoder changes

@@ -530,5 +530,37 @@ class TestAtEof(unittest.TestCase):
         self.assertTrue(self.inst._at_eof())
 
 
+class TestEndOfStream(unittest.TestCase):
+    """decode() must let end-of-stream exceptions propagate.
+
+    Newer libsigrokdecode signals end-of-capture from wait() with
+    EOFError('samples exhausted') (older versions use SystemError).
+    libsigrokdecode accepts either as normal decode() termination, so
+    swallowing them turns a clean end into a flood of DECODE ERROR retries.
+    """
+
+    def setUp(self):
+        _, pd = _load_iso7816()
+        self.pd = pd
+
+    def _decode_raising(self, exc_cls):
+        inst = object.__new__(self.pd.Decoder)
+        inst.write_pcap_header = lambda: None
+        inst.finish = lambda: None
+
+        def step():
+            raise exc_cls('samples exhausted')
+        inst.decode_step = step
+        return inst
+
+    def test_eoferror_propagates(self):
+        with self.assertRaises(EOFError):
+            self._decode_raising(EOFError).decode()
+
+    def test_systemerror_propagates(self):
+        with self.assertRaises(SystemError):
+            self._decode_raising(SystemError).decode()
+
+
 if __name__ == '__main__':
     unittest.main()

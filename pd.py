@@ -28,7 +28,7 @@ from .gsmtap_stream import (GsmtapStreamSender,
     GSMTAP_SIM_RST_EVENT, GSMTAP_SIM_VCC_EVENT,
     GSMTAP_FLAG_BAD_FCS)
 
-VERSION = '1.7.0'
+VERSION = '1.7.1'
 
 
 
@@ -807,7 +807,7 @@ class Decoder(srd.Decoder):
                 wes = max(self.es, wss + 1)
                 self.put(wss, wes, self.out_ann,
                          [Ann.ANN_WARN, ["noisy signal"]])
-            except SystemError:
+            except (SystemError, EOFError):
                 raise
             except Exception:
                 pass
@@ -856,7 +856,7 @@ class Decoder(srd.Decoder):
                 self._samples_per_clock = period
                 self.log("clock period (samples):", period)
                 return True
-        except SystemError:
+        except (SystemError, EOFError):
             raise
         except Exception:
             pass
@@ -1235,7 +1235,7 @@ class Decoder(srd.Decoder):
                 try:
                     self.put(self.ss, self.samplenum, self.out_ann,
                              [Ann.ANN_WARN, ["I/O stuck low?"]])
-                except SystemError:
+                except (SystemError, EOFError):
                     raise
                 except Exception:
                     pass
@@ -1346,7 +1346,7 @@ class Decoder(srd.Decoder):
                 try:
                     self.put(self.ss, self.samplenum, self.out_ann,
                              [Ann.ANN_WARN, ["I/O stuck low?"]])
-                except SystemError:
+                except (SystemError, EOFError):
                     raise
                 except Exception:
                     pass
@@ -1520,7 +1520,7 @@ class Decoder(srd.Decoder):
                     try:
                         self.put(self.ss, self.samplenum, self.out_ann,
                                  [Ann.ANN_WARN, ["I/O stuck low?"]])
-                    except SystemError:
+                    except (SystemError, EOFError):
                         raise
                     except Exception:
                         pass
@@ -2586,14 +2586,17 @@ class Decoder(srd.Decoder):
             while True:
                 # Crash protection: garbage from a noisy live signal must
                 # never kill the whole sigrok-cli process.  Log, warn and
-                # resync.  SystemError from wait() is the end-of-sample-
-                # stream signal and must propagate for a clean exit;
-                # KeyboardInterrupt (Ctrl+C) likewise passes through.
+                # resync.  End-of-sample-stream must propagate for a clean
+                # exit: older libsigrokdecode raises SystemError from
+                # put()/wait(), newer versions raise EOFError('samples
+                # exhausted') from wait() -- libsigrokdecode accepts either
+                # as normal decode() termination.  KeyboardInterrupt
+                # (Ctrl+C) likewise passes through.
                 try:
                     if (not self.decode_step()):
                         break
                     failures = 0
-                except SystemError:
+                except (SystemError, EOFError):
                     raise
                 except Exception as e:
                     traceback.print_exc(file=sys.stderr)
@@ -2603,7 +2606,7 @@ class Decoder(srd.Decoder):
                         wes = max(self.es, wss + 1)
                         self.put(wss, wes, self.out_ann,
                                  [Ann.ANN_WARN, ["decode error, resynced"]])
-                    except SystemError:
+                    except (SystemError, EOFError):
                         raise
                     except Exception:
                         pass
