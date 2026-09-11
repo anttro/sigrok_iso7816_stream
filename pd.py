@@ -28,7 +28,7 @@ from .gsmtap_stream import (GsmtapStreamSender,
     GSMTAP_SIM_RST_EVENT, GSMTAP_SIM_VCC_EVENT,
     GSMTAP_FLAG_BAD_FCS)
 
-VERSION = '1.5.0'
+VERSION = '1.6.0'
 
 
 
@@ -276,6 +276,15 @@ MAX_TPDU_LEN = 271  # ISO 7816-3 T=0: header(5) + proc + 255 + SW(2) < 271
 IDLE_RESYNC_ETU = 4  # idle bit-periods marking an exchange boundary
 MAX_RESYNC_ATTEMPTS = 1024  # bail out if no idle gap found in that many tries
 
+# ATR-hunt failure bounds.  When the default-rate (372 CLK/bit) hunt keeps
+# failing, the card is either idle or already running at a non-default F/D
+# (e.g. Samsung F=512/D=32 -> 16 CLK/bit).  Without a bound the hunt reads
+# idle 0xFF forever at the wrong rate and can never reach the DATA state,
+# where the live ETU is measured -- a deadlock.  These cap the retries.
+ATR_HUNT_ETU_ATTEMPTS = 3   # live-ETU recovery attempts before resuming DATA
+ATR_HUNT_IDLE_RESETS = 3    # all-0xFF hunt resets before resuming DATA
+ATR_HUNT_FAIL_LIMIT = 12    # total failed hunt rounds before resuming DATA
+
 
 class Decoder(srd.Decoder):
     api_version = 3
@@ -482,6 +491,15 @@ class Decoder(srd.Decoder):
         # ever present) eventually falls back to T=0 parsing instead of
         # looping forever.
         self._atr_hunt_count = 0
+        # Persistent hunt-failure accounting (reset only when an ATR is
+        # parsed, NOT on RST re-arm): a device that power-cycles RST while
+        # never sending a valid ATR would otherwise starve the escape below.
+        # _atr_fail_total counts every failed hunt round across activations;
+        # _hunt_etu_attempts caps live-ETU recovery; _atr_idle_resets caps the
+        # all-0xFF reset loop.
+        self._atr_fail_total = 0
+        self._hunt_etu_attempts = 0
+        self._atr_idle_resets = 0
         # PPS is only attempted once after an ATR/warm reset.  Prevents
         # idle-line 0xFF bytes from being parsed as an endless stream of
         # PPS requests when the card does not actually perform PPS.
@@ -945,6 +963,57 @@ class Decoder(srd.Decoder):
         # every byte from here on.
         self._edge_read = True
         self.log("etu recovered (samples):", self.bit_samples)
+
+    def _recover_etu_in_hunt(self):
+        '''Recover the live bit period from the DATA line while still in the
+        ATR hunt.
+
+        The hunt reads at the spec-default 372 CLK/bit.  A device already
+        running at a non-default F/D (Samsung F=512/D=32 -> 16 CLK/bit) or a
+        mid-session capture with no ATR sends no 372-rate bytes, so every
+        candidate reads as idle 0xFF and the hunt can never reach the DATA
+        state -- where _measure_etu() normally lives.  Measure the ETU here
+        (after the default-rate hunt has already failed a few rounds) and
+        re-derive clock_skip so subsequent hunt reads use the true rate.
+        Reuses the DATA-path measurement and its _confirm_etu() validation.'''
+        if self._samples_per_clock is None:
+            self._measure_clock_period()
+        self._measure_etu()
+        self._derive_clock_skip_from_etu()
+        # Start a fresh default-rate counting window at the recovered rate.
+        self._atr_hunt_count = 0
+        self.log("hunt ETU recovery attempt", self._hunt_etu_attempts,
+                 "bit_samples", self.bit_samples,
+                 "clock_skip", self.clock_skip)
+
+    def _atr_hunt_failure_action(self, byte):
+        '''Decide what to do after a failed ATR hunt round.
+
+        Returns one of:
+          'recover'     -- stop and recover the live ETU, then re-hunt
+          'retry'       -- go back to FIND START (bounded)
+          'resume_data' -- give up on the ATR and resume T=0 framing
+
+        The counters are persistent across RST re-arms (reset only when an
+        ATR is parsed) so a phone that cycles RST while never emitting a
+        valid ATR cannot starve the escape.  Pure function of state + byte
+        so it is unit-testable without libsigrokdecode.'''
+        self._atr_fail_total += 1
+        # Live-ETU recovery every 2 failures, up to ATR_HUNT_ETU_ATTEMPTS.
+        if (self.bit_samples is None
+                and self._hunt_etu_attempts < ATR_HUNT_ETU_ATTEMPTS
+                and self._atr_fail_total >=
+                    2 * (self._hunt_etu_attempts + 1)):
+            self._hunt_etu_attempts += 1
+            return 'recover'
+        # Hard bound: never hunt forever on an idle/unsyncable line.
+        if self._atr_fail_total >= ATR_HUNT_FAIL_LIMIT:
+            return 'resume_data'
+        if byte == 0xFF and self._atr_idle_resets >= ATR_HUNT_IDLE_RESETS:
+            return 'resume_data'
+        if self._atr_hunt_count < 8:
+            return 'retry'
+        return 'resume_data'
 
     def _confirm_etu(self, parity_ok):
         '''Validate ETU measurement after _measure_etu.  Call after each byte
@@ -1564,24 +1633,40 @@ class Decoder(srd.Decoder):
             ts_attempts += 1
         if (byte not in (0x3b, 0x3f)):
             self._atr_hunt_count += 1
-            # No valid ATR found this round -- go back to hunting for the
-            # next falling edge.  Never fabricate a synthetic ATR: a stray
-            # 0x3B/0x3F byte inside command traffic (e.g. the FID '3F00' of a
-            # SELECT) would otherwise be mis-committed as a fake 2-byte ATR
-            # and destroy the surrounding command.  The hunt is bounded by
-            # _atr_hunt_count only to avoid logging forever on a dead line.
-            if (self._atr_hunt_count < 8):
-                self.log("No valid TS byte, back to FIND START (hunt {count})".format(count=self._atr_hunt_count))
+            # No valid ATR found this round.  Never fabricate a synthetic
+            # ATR: a stray 0x3B/0x3F byte inside command traffic (e.g. the
+            # FID '3F00' of a SELECT) would otherwise be mis-committed as a
+            # fake 2-byte ATR and destroy the surrounding command.
+            action = self._atr_hunt_failure_action(byte)
+            if action == 'recover':
+                # Default-rate hunt has failed a few rounds: the card may be
+                # idle or already at a non-default F/D.  Measure the live ETU
+                # and re-hunt at that rate instead of looping on idle 0xFF.
+                self.log("ATR hunt failing; recovering live ETU")
+                self._recover_etu_in_hunt()
                 self.state = 'FIND START'
                 return
-            if byte == 0xFF:
-                self.log("line appears idle (all 0xFF), resetting ATR hunt")
-                self._atr_hunt_count = 0
+            if action == 'retry':
+                if byte == 0xFF:
+                    self._atr_idle_resets += 1
+                    self.log("line appears idle (all 0xFF), resetting ATR "
+                             "hunt (#{n})".format(n=self._atr_idle_resets))
+                    self._atr_hunt_count = 0
+                else:
+                    self.log("No valid TS byte, back to FIND START "
+                             "(hunt {count})".format(count=self._atr_hunt_count))
                 self.state = 'FIND START'
                 return
             # Give up hunting for an ATR here without emitting anything;
             # resume T=0 framing from the next byte instead of inventing one.
-            self.log("No valid ATR after {count} hunts; resuming DATA without synthetic ATR".format(count=self._atr_hunt_count))
+            # Clear bit_samples so the DATA path measures the ETU fresh.
+            self.log("No valid ATR after {count} hunts (fails={fails}); "
+                     "resuming DATA without synthetic ATR".format(
+                         count=self._atr_hunt_count,
+                         fails=self._atr_fail_total))
+            self.bit_samples = None
+            self._etu_confirm_count = 0
+            self._etu_fail_count = 0
             self.hasT0 = True
             self.hasT1 = False
             self.state = 'DATA'
@@ -1595,6 +1680,9 @@ class Decoder(srd.Decoder):
             return
         else:
             self._atr_hunt_count = 0
+            self._atr_fail_total = 0
+            self._hunt_etu_attempts = 0
+            self._atr_idle_resets = 0
         self.ATR.append(byte)
         # TS=0x3F means inverse convention: logic 1 = LOW, logic 0 = HIGH.
         # All subsequent byte reads must invert bits.

@@ -248,6 +248,93 @@ class TestDeglitchEdges(unittest.TestCase):
         self.assertEqual(result, [(0, 0), (100, 0)])
 
 
+class TestAtrHuntEscape(unittest.TestCase):
+    """Regression: the ATR hunt must never loop forever on an idle/unsyncable
+    line, and must recover the live ETU when the card is already at a
+    non-default F/D (Samsung 16 CLK/bit) with no 372-rate ATR coming."""
+
+    def setUp(self):
+        _, pd = _load_iso7816()
+        self.pd = pd
+        self.inst = object.__new__(pd.Decoder)
+        self.inst.bit_samples = None
+        self.inst._atr_hunt_count = 0
+        self.inst._atr_fail_total = 0
+        self.inst._hunt_etu_attempts = 0
+        self.inst._atr_idle_resets = 0
+
+    def _hunt_round(self, byte):
+        """Mirror handle_atr's bookkeeping around _atr_hunt_failure_action."""
+        self.inst._atr_hunt_count += 1
+        action = self.inst._atr_hunt_failure_action(byte)
+        if action == 'recover':
+            self.inst._atr_hunt_count = 0
+        elif action == 'retry' and byte == 0xFF:
+            self.inst._atr_idle_resets += 1
+            self.inst._atr_hunt_count = 0
+        return action
+
+    def test_retry_then_recover_after_two_failures(self):
+        self.assertEqual(self._hunt_round(0x00), 'retry')
+        self.assertEqual(self._hunt_round(0x00), 'recover')
+        self.assertEqual(self.inst._hunt_etu_attempts, 1)
+
+    def test_recovery_attempts_capped_then_hard_limit(self):
+        actions = [self._hunt_round(0x00) for _ in range(200)]
+        actions = actions[:actions.index('resume_data') + 1]
+        self.assertEqual(actions.count('recover'),
+                         self.pd.ATR_HUNT_ETU_ATTEMPTS)
+        self.assertEqual(actions[-1], 'resume_data')
+
+    def test_all_ff_idle_loop_is_bounded(self):
+        seen = []
+        for _ in range(200):
+            seen.append(self._hunt_round(0xFF))
+            if seen[-1] == 'resume_data':
+                break
+        self.assertEqual(seen[-1], 'resume_data')
+        self.assertLess(len(seen), 20)
+
+    def test_idle_ff_retries_before_cap(self):
+        self.inst.bit_samples = 100  # ETU known -> recovery disabled
+        self.inst._hunt_etu_attempts = self.pd.ATR_HUNT_ETU_ATTEMPTS
+        self.inst._atr_idle_resets = self.pd.ATR_HUNT_IDLE_RESETS - 1
+        self.assertEqual(self.inst._atr_hunt_failure_action(0xFF), 'retry')
+
+    def test_idle_resets_capped_then_resume(self):
+        self.inst.bit_samples = 100
+        self.inst._hunt_etu_attempts = self.pd.ATR_HUNT_ETU_ATTEMPTS
+        self.inst._atr_idle_resets = self.pd.ATR_HUNT_IDLE_RESETS
+        self.assertEqual(self.inst._atr_hunt_failure_action(0xFF),
+                         'resume_data')
+
+    def test_non_ff_resumes_when_count_high(self):
+        self.inst.bit_samples = 100
+        self.inst._hunt_etu_attempts = self.pd.ATR_HUNT_ETU_ATTEMPTS
+        self.inst._atr_hunt_count = 8
+        self.assertEqual(self.inst._atr_hunt_failure_action(0x00),
+                         'resume_data')
+
+    def test_no_recovery_when_etu_known(self):
+        self.inst.bit_samples = 100
+        for _ in range(6):
+            self.assertEqual(self._hunt_round(0x00), 'retry')
+        self.assertEqual(self.inst._hunt_etu_attempts, 0)
+
+    def test_recover_etu_in_hunt_runs_measurement(self):
+        calls = []
+        self.inst._samples_per_clock = 4.0  # skip CLK-period measurement
+        self.inst._measure_etu = lambda: calls.append('measure')
+        self.inst._derive_clock_skip_from_etu = lambda: calls.append('derive')
+        self.inst._measure_clock_period = lambda: calls.append('period')
+        self.inst.log = lambda *a, **k: None
+        self.inst.clock_skip = 372
+        self.inst._atr_hunt_count = 5
+        self.inst._recover_etu_in_hunt()
+        self.assertEqual(calls, ['measure', 'derive'])
+        self.assertEqual(self.inst._atr_hunt_count, 0)
+
+
 class TestEmbeddedExchanges(unittest.TestCase):
     """CONCAT detection: structurally valid packets that embed complete T=0
     exchanges (a byte-drop mis-frame swallowed several real exchanges into

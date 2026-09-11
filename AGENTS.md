@@ -255,6 +255,55 @@ mis-frame at the source) is the next decoder step; until then the gate
 makes the corruption visible in live and offline captures instead of
 silently producing wrong APDUs.
 
+### v1.6.0: ATR-hunt deadlock + idle-loop trap fixes
+
+A live Samsung cold-boot capture that never emits a 372-rate ATR exposed two
+defects in the ATR hunt (`state == 'FIND START'`):
+
+1. **Deadlock.** `RST low at start` arms the hunt at the spec-default
+   `clock_skip=372` with `bit_samples=None`.  The ETU-recovery routine
+   `_measure_etu()` is only reachable from the `DATA` state, which the hunt
+   can only enter after reading a valid `TS=0x3B/0x3F` (or a plausible
+   CLA/INS header) **at 372**.  A card already running at a non-default F/D
+   (Samsung `F=512/D=32` -> 16 CLK/bit) produces none, so the hunt reads
+   idle `0xFF` forever and never reaches the ETU measurement -- a circular
+   dependency.  This is why Samsung (non-default F/D) fails where
+   default-F/D devices succeed: not clock rate, but `F/D`.
+
+2. **Trap.** The all-`0xFF` branch unconditionally reset `_atr_hunt_count=0`
+   and returned to `FIND START`, so the bounded fall-through to `DATA` was
+   unreachable.  With RST re-arm also resetting the counter, the hunt could
+   spin forever.
+
+Fixes:
+
+- **Hunt-side ETU recovery.** `_recover_etu_in_hunt()` runs `_measure_etu()`
+  + `_derive_clock_skip_from_etu()` from the hunt after the default-rate
+  hunt has already failed a few rounds, so a fast device is read at its
+  true rate.  It reuses the DATA-path `_confirm_etu()` validation, so a
+  noise-locked ETU self-clears after 2 parity failures.  No-op for normal
+  ATRs (parsed on hunt 1).
+- **Bounded escape.** `_atr_hunt_failure_action(byte)` (pure, unit-tested)
+  returns `recover` / `retry` / `resume_data`.  ETU recovery every 2 failed
+  rounds up to 3 times; then a hard bound (`_atr_fail_total >= 12`) or the
+  all-`0xFF` idle cap (3) falls through to the existing "resuming DATA
+  without synthetic ATR" path (clearing `bit_samples` so the DATA path
+  re-measures).
+- **Persistent counters.** `_atr_fail_total`, `_hunt_etu_attempts`,
+  `_atr_idle_resets` are reset only on a successful ATR parse, **not** on
+  RST re-arm -- otherwise a phone that power-cycles RST while never sending
+  a valid ATR would starve the escape.  Constants: `ATR_HUNT_ETU_ATTEMPTS=3`,
+  `ATR_HUNT_IDLE_RESETS=3`, `ATR_HUNT_FAIL_LIMIT=12`.
+
+Verification: no regression on the full trace suite (test_8 56/0/OK,
+test_7 65/0/OK, xiaomi 640, xiaomi_cold 473, 4gmodem 327, A55 407/395,
+S21p 399/375, target S21p_coldboot 369, all `RESULT: OK`, 0 CONCAT);
+54/54 unit tests (7 new hunt-escape regression tests).  VERSION -> 1.6.0.
+
+Known limitation: no on-disk fixture reproduces the exact live failure (all
+real captures contain a 372 ATR), so end-to-end proof needs a re-captured
+`.sr` from the failing phone; the unit tests cover the loop-escape logic.
+
 ### v1.5.0: invalid-INS one-byte re-frame (residual CONCATs → 0)
 
 The last CONCAT family (4gmodem/A55_sim2/S21p_sim2) is now **reframed at
