@@ -192,11 +192,16 @@ is the usual suspect.
 `start.sh` captures a continuous stream at the configured rate (default 16
 MHz) until Ctrl+C (`rc=130`). A healthy capture never ends by itself; if the
 FX2 drops the USB transfer mid-session (a flaky device, `rc=0` "device
-stopped streaming"), pass `--loop` to auto-restart — it re-launches the
-capture on every `rc=0` until you press Ctrl+C or hit `--max-restarts=N`
-(default 20; `0` = unlimited), with a `--restart-delay=S` gap (default 2 s).
+stopped streaming"), the capture auto-restarts so the session is not lost —
+it re-launches on every `rc=0` until you press Ctrl+C or hit
+`--max-restarts=N` (default 20; `0` = unlimited), with a `--restart-delay=S`
+gap (default 2 s). When restarting with `--pcap=FILE`, each session's capture
+is written to `FILE.<N>.<ext>` so a restart never overwrites the previous one,
+and the repetitive `sr_session_stop: session was NULL` teardown line is
+filtered from stderr.
 
-- `--loop` auto-restarts the capture when it ends on its own (`rc=0`).
+- `--no-loop` disables auto-restart (single capture only).
+- `--loop` forces auto-restart on (this is the default).
 - `--max-restarts=N` caps restarts (default 20; `0` = unlimited).
 - `--restart-delay=S` seconds to wait between restarts (default 2).
 - `--log` captures the `rc=` verdict line for the session end.

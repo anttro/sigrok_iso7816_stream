@@ -304,6 +304,43 @@ Known limitation: no on-disk fixture reproduces the exact live failure (all
 real captures contain a 372 ATR), so end-to-end proof needs a re-captured
 `.sr` from the failing phone; the unit tests cover the loop-escape logic.
 
+### v1.7.0: spurious end-of-decode hardening + start.sh session resilience
+
+A live capture could end without Ctrl+C (the session simply stopped).  The
+frontend symptom was a flood of `sr: session: sr_session_stop: session was
+NULL`, but the decoder also had latent paths that could end `decode()` early
+on an idle/busy live line.  Fixed:
+
+1. **`_at_eof()`.**  `decode_step()` treated `samplenum == _last_sn` as EOF,
+   but a step can legitimately consume only queued bytes (`_replay` /
+   `peeked_byte`) without advancing the stream -- e.g. the v1.5.0 invalid-INS
+   re-frame.  Such steps are now allowed up to 64 in a row; only a genuinely
+   stuck stream with nothing queued ends the decode.
+2. **`_stall_check(track=False)`.**  The idle-LEVEL wait in
+   `wait_data_falling()` returns immediately at the current sample whenever
+   DATA is already idle -- normal on a live idle line, not EOF.  Stall
+   counting is now disabled for that wait (only `pins is None` means EOF);
+   sample-stall detection is kept for the start-bit EDGE wait.
+3. **`resync_idle()` null guard.**  It indexed `pins[self.DATA_IDX]` after
+   `wait()` with no `None` check; at stream end that raised `TypeError`.  Now
+   sets `_eof` and returns.
+
+**Effect:** `samsung_phone_sample.sr` had been halting at sample ~21.9M of
+320M (1 APDU).  It now decodes through sample ~293M to a true end: **939
+APDUs**, `CHKSUM=176`.  The extra 6 `CONCAT` packets are real mis-framed STK
+bursts that were simply never reached before -- the known Samsung
+de-concatenation family; the rest of the suite is unchanged.
+
+**start.sh:** auto-restart is now the **default** (`--no-loop` disables), so
+an intermittent FX2 USB stop reconnects instead of ending the session;
+per-session pcap suffix (`.N.pcap`) so a restart never overwrites the
+previous capture; and the repetitive `sr_session_stop: session was NULL`
+teardown line is filtered from stderr (real decoder errors still pass).
+
+Validation: test_8 56/0/OK, test_7 65/0/OK, xiaomi_phone 640, xiaomi_cold
+473, 4gmodem 327, A55 407/395, S21p 399/375, target S21p 369 -- all
+`RESULT: OK`, 0 CONCAT.  65/65 unit tests (10 new).  VERSION -> 1.7.0.
+
 ### v1.5.0: invalid-INS one-byte re-frame (residual CONCATs → 0)
 
 The last CONCAT family (4gmodem/A55_sim2/S21p_sim2) is now **reframed at
@@ -570,7 +607,7 @@ official gsmtap.h reserves — a simtrace2-sniff convention.
 
 ### Versioning
 
-The decoder version is defined in `pd.py` as `VERSION = '1.5.0'`.
+The decoder version is defined in `pd.py` as `VERSION = '1.7.0'`.
 The version is printed to the log on decoder startup.
 
 ### Testing after decoder changes

@@ -6,6 +6,7 @@ the real pd.py / gsmtap_stream.py sources under the `iso7816` package
 name (mirroring how libsigrokdecode loads a decoder directory).
 """
 
+import collections
 import importlib.util
 import os
 import sys
@@ -445,6 +446,88 @@ class TestEmbeddedExchanges(unittest.TestCase):
                  '0017183040000eec18a01058b032f0601c6069001008301019000'
                  '01a4000402a42f00612101c0000021621f')
         self.assertFalse(self.pd.is_desynced(bytes.fromhex(a55u1)))
+
+
+class TestStallCheck(unittest.TestCase):
+    """_stall_check distinguishes true EOF (None pins) from a live line that
+    is merely idle (a level wait returns immediately at the same sample)."""
+
+    def setUp(self):
+        _, pd = _load_iso7816()
+        self.inst = object.__new__(pd.Decoder)
+        self.inst.samplenum = 100
+        self.inst._prev_wait_sn = None
+        self.inst._stall = 0
+
+    def test_none_pins_is_eof(self):
+        self.assertTrue(self.inst._stall_check(None))
+
+    def test_advancing_sample_is_not_stall(self):
+        for sn in range(100, 110):
+            self.inst.samplenum = sn
+            self.assertFalse(self.inst._stall_check([1]))
+
+    def test_repeated_same_sample_is_bounded_stall(self):
+        results = []
+        for _ in range(10):
+            self.inst.samplenum = 100
+            results.append(self.inst._stall_check([1]))
+        self.assertFalse(results[0])
+        self.assertIn(True, results)
+
+    def test_untracked_level_wait_never_stalls(self):
+        # An idle-level wait repeats at the same sample on a live idle line;
+        # with track=False it must not be flagged as EOF.
+        for _ in range(10):
+            self.inst.samplenum = 100
+            self.assertFalse(self.inst._stall_check([1], track=False))
+        self.assertEqual(self.inst._stall, 0)
+        self.assertIsNone(self.inst._prev_wait_sn)
+
+    def test_untracked_resets_stall_window(self):
+        for _ in range(6):
+            self.inst.samplenum = 100
+            self.inst._stall_check([1])  # would trip the tracked stall
+        self.assertTrue(self.inst._stall > 4)
+        self.inst._stall_check([1], track=False)
+        self.assertFalse(self.inst._stall_check([1]))  # window reset
+
+
+class TestAtEof(unittest.TestCase):
+    """decode_step must not treat a replay-only step (no sample progress) as
+    end-of-capture, but must still terminate a genuinely stuck stream."""
+
+    def setUp(self):
+        _, pd = _load_iso7816()
+        self.inst = object.__new__(pd.Decoder)
+        self.inst.samplenum = 500
+        self.inst._last_sn = 500
+        self.inst._no_advance = 0
+        self.inst._eof = False
+        self.inst._replay = collections.deque()
+        self.inst.peeked_byte = None
+
+    def test_advancing_is_not_eof(self):
+        self.inst.samplenum = 501
+        self.assertFalse(self.inst._at_eof())
+
+    def test_stuck_with_nothing_queued_is_eof(self):
+        self.assertTrue(self.inst._at_eof())
+
+    def test_pending_replay_is_not_eof(self):
+        self.inst._replay.append(0x00)
+        self.assertFalse(self.inst._at_eof())
+
+    def test_pending_replay_is_bounded(self):
+        self.inst._replay.append(0x00)
+        for _ in range(64):
+            self.assertFalse(self.inst._at_eof())
+        self.assertTrue(self.inst._at_eof())
+
+    def test_explicit_eof_wins(self):
+        self.inst._eof = True
+        self.inst.samplenum = 600
+        self.assertTrue(self.inst._at_eof())
 
 
 if __name__ == '__main__':

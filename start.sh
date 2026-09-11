@@ -18,7 +18,9 @@ DEBUG=""
 ANNOT="iso7816=apdus,iso7816=warnings"   # default: decoded APDUs + warnings only
 LOG=""
 KLOG=""
-LOOP=0              # --loop: restart on rc=0 (device stopped streaming)
+LOOP=1              # Restart on rc=0 (device stopped streaming) by default
+                    #   so an intermittent FX2 USB drop does not end the
+                    #   session.  --no-loop disables; --max-restarts caps it.
 MAX_RESTARTS=20     # --max-restarts=N (0 = unlimited)
 RESTART_DELAY=2     # --restart-delay=S seconds between restarts
 PROTOCOL="T=0"      # --protocol: T=0 (default; live phone captures start
@@ -69,11 +71,12 @@ Options:
                     T=1, or auto.  Live phone captures start mid-session, so a
                     fixed protocol lets the decoder emit raw bursts instead of
                     hunting for a (non-existent) ATR.
-  --loop            Auto-restart when the capture ends on its own (rc=0, device
-                    stopped streaming).  Loops until you press Ctrl+C (rc=130)
-                    or a real error.  Useful for a flaky FX2 that drops the USB
-                    transfer mid-session.
-  --max-restarts=N  Cap --loop restarts (default: 20; 0 = unlimited).
+  --no-loop         Disable auto-restart.  By default the capture restarts
+                    when it ends on its own (rc=0, device stopped streaming,
+                    e.g. an intermittent FX2 USB drop).  Restarts stop on
+                    Ctrl+C or a real error.
+  --loop            Force auto-restart on (this is already the default).
+  --max-restarts=N  Cap auto-restarts (default: 20; 0 = unlimited).
   --restart-delay=S Seconds to wait between restarts (default: 2).
   -h, --help        Show this help
 
@@ -122,6 +125,7 @@ for arg in "$@"; do
         --starts-with-atr=*)
             echo "WARNING: --starts-with-atr is obsolete (removed in v1.3.0); the decoder always runs mid-session" >&2 ;;
         --loop)          LOOP=1 ;;
+        --no-loop)       LOOP=0 ;;
         --max-restarts=*) MAX_RESTARTS="${arg#*=}" ;;
         --restart-delay=*) RESTART_DELAY="${arg#*=}" ;;
         -h|--help)       usage ;;
@@ -237,10 +241,21 @@ FIFO=""
 FIFO_PID=""
 
 run_once() {
-    # $1 = samplerate, $2 = pcap file for this session (may be empty)
+    # $1 = samplerate, $2 = pcap file (may be empty), $3 = session number
+    # (may be empty; only set when auto-restarting).
     local rate="$1"
+    local pcap_file="$2"
+    local session="${3:-}"
+    # Suffix the pcap per session when restarting so a restart never
+    # overwrites the previous session's capture.
+    if [ -n "${pcap_file}" ] && [ -n "${session}" ]; then
+        case "${pcap_file}" in
+            *.*) pcap_file="${pcap_file%.*}.${session}.${pcap_file##*.}" ;;
+            *)   pcap_file="${pcap_file}.${session}" ;;
+        esac
+    fi
     local pcap_opt=""
-    [ -n "$2" ] && pcap_opt=":pcap_file=$2"
+    [ -n "${pcap_file}" ] && pcap_opt=":pcap_file=${pcap_file}"
     # Blocking, keypress-free stdin: sigrok-cli's "press any key to stop"
     # waits on stdin.  /dev/null EOFs instantly and stops the capture (the
     # bug introduced when detaching stdin), and a real keypress would too.
@@ -251,13 +266,18 @@ run_once() {
     mkfifo "${FIFO}"
     sleep 1000000 > "${FIFO}" &
     FIFO_PID=$!
+    # Filter the libsigrok teardown noise (sigrok-cli re-calls
+    # sr_session_stop on an already-stopped session after a device stop).
+    # Only that exact line is dropped; real decoder errors on stderr pass.
     sigrok-cli -d fx2lafw \
         --config samplerate="${rate}" \
         --continuous \
         -C 'D0,D1,D2,D3,D4,D5,D6,D7' \
         ${DEBUG:+-l 4} \
         -P "iso7816:${OPTS}${pcap_opt}" \
-        -A "${ANNOT}" < "${FIFO}" | tee "${ANNOT_TMP}"
+        -A "${ANNOT}" \
+        2> >(grep -vF 'sr_session_stop: session was NULL' >&2) < "${FIFO}" \
+        | tee "${ANNOT_TMP}"
     local rc=${PIPESTATUS[0]}
     kill "${FIFO_PID}" 2>/dev/null || true
     rm -f "${FIFO}" 2>/dev/null || true
@@ -301,7 +321,7 @@ if [ "${LOOP}" -eq 1 ]; then
     tries=0
     while true; do
         tries=$((tries + 1))
-        run_once "${SAMPLERATE}" "${PCAP}"
+        run_once "${SAMPLERATE}" "${PCAP}" "${tries}"
         rc=$?
         report_exit "${tries}" "$rc"
         # A non-zero rc means a genuine stop: Ctrl+C (130) or an error.

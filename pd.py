@@ -28,7 +28,7 @@ from .gsmtap_stream import (GsmtapStreamSender,
     GSMTAP_SIM_RST_EVENT, GSMTAP_SIM_VCC_EVENT,
     GSMTAP_FLAG_BAD_FCS)
 
-VERSION = '1.6.0'
+VERSION = '1.7.0'
 
 
 
@@ -452,6 +452,11 @@ class Decoder(srd.Decoder):
         self._start_fall = None
         self._edge_read = True
         self._last_sn = -1
+        # Bounded allowance for steps that consume only queued bytes
+        # (_replay / peeked_byte) and therefore do not advance the sample
+        # counter.  Without it the "stuck sample number == EOF" test below
+        # would mistake a re-frame step for end-of-capture.
+        self._no_advance = 0
         self._eof = False
         self._min_pulse_samples = 2  # tuned for 16 MHz sample rate
         self._glitch_rejects = 0
@@ -1389,7 +1394,7 @@ class Decoder(srd.Decoder):
                 cond.append({self.VCC_IDX: 'e'})
             while True:
                 pins = self.wait(cond)
-                if self._stall_check(pins):
+                if self._stall_check(pins, track=False):
                     self._eof = True
                     return
                 if (self.line_events(pins)):
@@ -1427,12 +1432,22 @@ class Decoder(srd.Decoder):
             self._start_fall = self.samplenum
             return
 
-    def _stall_check(self, pins):
+    def _stall_check(self, pins, track=True):
         '''Detect end-of-capture: libsigrokdecode stops advancing the sample
         counter once the feed is exhausted, so a wait that returns the same
-        sample number repeatedly means there is no more data.'''
+        sample number repeatedly means there is no more data.
+
+        `track=False` is used for idle-LEVEL waits: a level condition that is
+        already satisfied returns immediately at the current sample without
+        advancing, which is normal on an idle line and NOT end-of-capture.
+        Only a ``None`` pin set (true end-of-stream) is treated as EOF there;
+        the stall window is reset so a following edge wait starts fresh.'''
         if pins is None:
             return True
+        if not track:
+            self._prev_wait_sn = None
+            self._stall = 0
+            return False
         if self._prev_wait_sn is not None and self.samplenum == self._prev_wait_sn:
             self._stall += 1
         else:
@@ -1556,6 +1571,11 @@ class Decoder(srd.Decoder):
         idle_level = 0 if self._inverse_convention else 1
         for _ in range(loops):
             pins = self.wait({'skip': 0})
+            if pins is None:
+                # End of capture / session stopped mid-resync: stop cleanly
+                # instead of raising TypeError on the None pin state.
+                self._eof = True
+                return
             if pins[self.DATA_IDX] == idle_level:
                 return
         # Could not find an idle gap -- resume normal decode anyway.
@@ -2002,12 +2022,29 @@ class Decoder(srd.Decoder):
         self.emit_packet(GSMTAP_SIM_PPS, bytes(pps_req + pps_rsp), ss, self.samplenum)
 
 
+    def _at_eof(self):
+        '''True when the sample stream is exhausted.
+
+        libsigrokdecode stops advancing the sample counter once the feed is
+        gone, so a stuck sample number normally means end-of-capture.  But a
+        step may legitimately consume only queued bytes (_replay /
+        peeked_byte) without touching the stream (e.g. the invalid-INS
+        one-byte re-frame); allow a bounded number of those so a re-frame is
+        never mistaken for EOF.'''
+        if self._eof:
+            return True
+        if self.samplenum != self._last_sn:
+            self._no_advance = 0
+            return False
+        if ((self._replay or self.peeked_byte is not None)
+                and self._no_advance < 64):
+            self._no_advance += 1
+            return False
+        return True
+
     def decode_step(self):
         '''Run one state-machine step. Returns False when decoding ends.'''
-        # End-of-capture detection: libsigrokdecode stops advancing the sample
-        # counter once the feed is exhausted, so a stuck sample number means
-        # we have consumed everything (and any pending wait is non-blocking).
-        if self.samplenum == self._last_sn or self._eof:
+        if self._at_eof():
             return False
         self._last_sn = self.samplenum
         # Prime the initial RST/VCC levels from the actual first sample (no
