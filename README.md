@@ -8,8 +8,13 @@ behave like a SIMtrace2 sniffer:
 SIM card ⇄ reader (passive tap on the contacts)
     → FX2 logic analyzer (fx2lafw, 8ch, 24MHz max)
     → sigrok-cli + iso7816 decoder
-    → GSMTAP UDP :4729  →  simtrace2-pysniff / Wireshark
+    → GSMTAP UDP :4729  →  [simtrace2-pysniff](https://github.com/anttro/simtrace2-pysniff) / Wireshark
 ```
+
+[simtrace2-pysniff](https://github.com/anttro/simtrace2-pysniff) is the
+recommended tool for visualising live traces and viewing saved captures —
+it can also import/export GSMTAP pcap files (including the PCAP written by
+this decoder's `pcap_file=<path>` option).
 
 ## The tap in practice
 
