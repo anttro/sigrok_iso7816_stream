@@ -24,11 +24,11 @@ import traceback
 from collections import deque
 
 from .gsmtap_stream import (GsmtapStreamSender,
-    GSMTAP_SIM_APDU, GSMTAP_SIM_ATR, GSMTAP_SIM_PPS,
+    GSMTAP_SIM_APDU, GSMTAP_SIM_ATR, GSMTAP_SIM_PPS_REQ, GSMTAP_SIM_PPS_RSP,
     GSMTAP_SIM_RST_EVENT, GSMTAP_SIM_VCC_EVENT,
     GSMTAP_FLAG_BAD_FCS)
 
-VERSION = '1.7.1'
+VERSION = '1.8.0'
 
 
 
@@ -1921,7 +1921,11 @@ class Decoder(srd.Decoder):
         if (lrc != 0):
             self.put(ss, self.samplenum, self.out_ann, [0, ["INVALID Checksum on PPS Request, got={got:02x} expected={expected:02x}".format(got=pck,expected=(lrc ^ pps ^ pps0))]])
             self.log("INVALID Checksum on PPS Request", hex(lrc))
-        
+        # End of the request frame: the response starts on the next byte.
+        # Keep the boundary sample so the two halves can be emitted as the
+        # separate standard GSMTAP subtypes (PPS_REQ / PPS_RSP).
+        es_req = self.samplenum
+
         r_lrc = 0
         r_pps = self.read_byte()
         pps_rsp = [r_pps]
@@ -2019,7 +2023,10 @@ class Decoder(srd.Decoder):
             self.log("INVALID PPS. Request & Response not matching.", hex(r_lrc))       
             self.put(ss, self.samplenum, self.out_ann, [0, ["INVALID PPS. Request & Response not matching"]])
         self.put(ss, self.samplenum, self.out_ann, [3, ["PPS", "PPS DI={di} FI={fi} clock_skip={clock_skip}".format(di=self.di,fi=self.fi,clock_skip=self.clock_skip)]])
-        self.emit_packet(GSMTAP_SIM_PPS, bytes(pps_req + pps_rsp), ss, self.samplenum)
+        # Standard GSMTAP-SIM framing: request and response are separate
+        # packets (sub_type 0x02 / 0x03), each with its own sample span.
+        self.emit_packet(GSMTAP_SIM_PPS_REQ, bytes(pps_req), ss, es_req)
+        self.emit_packet(GSMTAP_SIM_PPS_RSP, bytes(pps_rsp), es_req, self.samplenum)
 
 
     def _at_eof(self):

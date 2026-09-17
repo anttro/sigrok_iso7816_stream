@@ -81,7 +81,8 @@ GSMTAP header: version 2, type SIM (0x04), UDP port 4729.
 |----------|------|---------|
 | 0x00 | APDU | raw T=0/T=1 packet bytes |
 | 0x01 | ATR | raw ATR bytes |
-| 0x02 | PPS | PPS request + response bytes concatenated (deviation, see below) |
+| 0x02 | PPS request | raw PPS request bytes |
+| 0x03 | PPS response | raw PPS response bytes |
 | 0x10 | RST event (custom) | `[direction, level, 0x00]` |
 | 0x11 | VCC event (custom) | `[direction, level, 0x00]` |
 
@@ -91,17 +92,15 @@ Event payload byte semantics:
 - VCC: `direction` 1 = power applied (low→high), 0 = removed (high→low);
   `level` = line level after the transition.
 
-0x00/0x01 match libosmocore's gsmtap.h: standard values and payloads.
-0x02 reuses the spec's `GSMTAP_SIM_PPS_REQ` value but carries the request
-and response bytes concatenated in one packet; the spec splits PPS into
-`PPS_REQ` (0x02) / `PPS_RSP` (0x03), so Wireshark dissects these are
-"PPS request" and `PPS_RSP` (0x03) is never sent.  0x10/0x11 are custom
-extensions not defined in libosmocore's gsmtap.h.
+0x00-0x03 match libosmocore's gsmtap.h: standard values and payloads
+(PPS request and response are emitted as separate packets).  0x10/0x11
+are custom extensions not defined in libosmocore's gsmtap.h.
 
 Header extensions: flags such as `GSMTAP_FLAG_BAD_FCS` are written into
-the header `res` byte, which official gsmtap.h marks reserved (RFU) —
-flag usage there follows the simtrace2-sniff convention and is not part
-of the libosmocore spec.
+the header `res` byte, which official gsmtap.h marks reserved (RFU).
+This carriage is this decoder's own extension (upstream simtrace2-sniff
+never sets `res`); the flag semantics mirror simtrace2's per-message USB
+data flags and are not part of the libosmocore spec.
 
 ## Usage
 

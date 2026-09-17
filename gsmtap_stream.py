@@ -18,15 +18,14 @@ GSMTAP_VERSION = 0x02
 GSMTAP_HDR_LEN = 4           # in 32-bit words (16 bytes)
 GSMTAP_TYPE_SIM = 0x04
 
-# sub_type values.  0x00/0x01 are standard GSMTAP-SIM types with standard
-# payloads (libosmocore gsmtap.h).  0x02 uses the spec's GSMTAP_SIM_PPS_REQ
-# value but carries request + response bytes concatenated in one packet;
-# the spec splits PPS into PPS_REQ (0x02) / PPS_RSP (0x03), so Wireshark
-# dissects 0x02 as "PPS request" and GSMTAP_SIM_PPS_RSP (0x03) is
-# intentionally unused.  0x10/0x11 are custom extensions (not in the spec).
+# sub_type values.  0x00-0x03 are standard GSMTAP-SIM types with standard
+# payloads (libosmocore gsmtap.h): the PPS request and response are emitted
+# as separate packets (PPS_REQ 0x02 / PPS_RSP 0x03).  0x10/0x11 are custom
+# extensions (not in the spec) for RST/VCC line events.
 GSMTAP_SIM_APDU = 0x00
 GSMTAP_SIM_ATR = 0x01
-GSMTAP_SIM_PPS = 0x02        # request + response combined (this decoder)
+GSMTAP_SIM_PPS_REQ = 0x02    # raw PPS request bytes
+GSMTAP_SIM_PPS_RSP = 0x03    # raw PPS response bytes
 GSMTAP_SIM_RST_EVENT = 0x10  # payload: [direction, level, reserved]
 GSMTAP_SIM_VCC_EVENT = 0x11  # payload: [direction, level, reserved]
 
@@ -39,9 +38,11 @@ GSMTAP_SIM_VCC_EVENT = 0x11  # payload: [direction, level, reserved]
 
 GSMTAP_UDP_PORT = 4729
 
-# libosmocore gsmtap.h: per-packet flags live in the header `res` byte,
-# which the spec marks reserved (RFU).  Flag usage here is a documented
-# extension following the simtrace2-sniff convention, not part of gsmtap.h.
+# Per-packet flags are carried in the header `res` byte, which libosmocore's
+# gsmtap.h defines as reserved (RFU).  This carriage is our own extension --
+# upstream simtrace2-sniff/cardem never set `res` -- although the flag
+# semantics mirror simtrace2's per-message USB data flags (the wire problem
+# is reported out-of-band instead of being encoded in the APDU bytes).
 GSMTAP_FLAG_BAD_FCS = 0x01  # "Any data checksum is wrong" -- reused here to
                             # mark decoder-desynced TPDUs (see README.md,
                             # "GSMTAP events").
@@ -60,8 +61,8 @@ def build_packet(sub_type, data, flags=0):
         GSMTAP_TYPE_SIM,   # type
         0,                 # timeslot
         0,                 # arfcn
-        0,                 # noise_db
-        0,                 # signal_db
+        0,                 # signal_dbm (libosmocore gsmtap.h field order)
+        0,                 # snr_db
         0,                 # frame_number
         sub_type,          # sub_type
         0,                 # antenna_nr

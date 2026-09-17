@@ -66,6 +66,12 @@ class TestGsmtapFlags(unittest.TestCase):
     def test_flag_constant_value(self):
         self.assertEqual(self.gs.GSMTAP_FLAG_BAD_FCS, 0x01)
 
+    def test_pps_subtypes_are_standard(self):
+        # PPS is emitted as the two standard GSMTAP-SIM subtypes
+        # (libosmocore gsmtap.h), request and response as separate packets.
+        self.assertEqual(self.gs.GSMTAP_SIM_PPS_REQ, 0x02)
+        self.assertEqual(self.gs.GSMTAP_SIM_PPS_RSP, 0x03)
+
 
 class TestDesyncHelpers(unittest.TestCase):
     @classmethod

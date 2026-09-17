@@ -304,6 +304,21 @@ Known limitation: no on-disk fixture reproduces the exact live failure (all
 real captures contain a 372 ATR), so end-to-end proof needs a re-captured
 `.sr` from the failing phone; the unit tests cover the loop-escape logic.
 
+### v1.8.0: PPS emitted as standard request + response packets
+
+The PPS exchange was previously emitted as a single packet under sub_type
+0x02 (`GSMTAP_SIM_PPS_REQ`) carrying the request + response bytes
+concatenated — a deviation from libosmocore's gsmtap.h.  It is now split
+into the two standard subtypes: 0x02 (`PPS_REQ`, raw request bytes, span
+`ss..es_req`) and 0x03 (`PPS_RSP`, raw response bytes, span
+`es_req..end`).  Wireshark now dissects both halves, and simtrace2-pysniff
+needs no change: its pcap importer already maps 0x03 to `pps` and
+`_decode_pps()` parses any 0xFF-leading frame (the response frame also
+starts with 0xFF).  The PPS annotation and stderr log lines are unchanged.
+`tests/baseline.txt` regenerated — the only differences were the version
+line and the unit-test listing, no decode-metric changes.  68/68 unit
+tests.  VERSION -> 1.8.0.
+
 ### v1.7.1: accept EOFError as clean end-of-stream (newer libsigrokdecode)
 
 Newer libsigrokdecode signals end-of-capture from `wait()` by raising
@@ -619,18 +634,19 @@ dirty-wire tail (GARBAGE=1 / RESULT UNCLEAN) and was dropped from the suite.
 
 ### GSMTAP wire-format extensions
 
-The GSMTAP-SIM output deviates from libosmocore's gsmtap.h in three
-documented ways (see README.md "GSMTAP events" and the comments in
-`gsmtap_stream.py`): sub_type 0x02 (`GSMTAP_SIM_PPS`) carries the PPS
-request + response combined under the spec's `PPS_REQ` value (the spec
-splits into `PPS_REQ` 0x02 / `PPS_RSP` 0x03; 0x03 is unused here);
-0x10/0x11 (`RST_EVENT`/`VCC_EVENT`) are custom line-event subtypes; and
+The GSMTAP-SIM output uses the standard sub_types 0x00-0x03 from
+libosmocore's gsmtap.h with standard payloads -- APDU, ATR, and the PPS
+request/response as separate packets (see README.md "GSMTAP events" and the
+comments in `gsmtap_stream.py`).  It deviates in two documented ways:
+0x10/0x11 (`RST_EVENT`/`VCC_EVENT`) are custom line-event subtypes, and
 `GSMTAP_FLAG_BAD_FCS` writes flags into the header `res` byte, which
-official gsmtap.h reserves — a simtrace2-sniff convention.
+official gsmtap.h reserves.  The `res`-byte carriage is this decoder's own
+extension (upstream simtrace2 never sets `res`); the semantics mirror
+simtrace2's per-message USB data flags.
 
 ### Versioning
 
-The decoder version is defined in `pd.py` as `VERSION = '1.7.1'`.
+The decoder version is defined in `pd.py` as `VERSION = '1.8.0'`.
 The version is printed to the log on decoder startup.
 
 ### Testing after decoder changes
