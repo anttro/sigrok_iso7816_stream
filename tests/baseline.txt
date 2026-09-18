@@ -1,7 +1,7 @@
-=== Baseline captured 2026-09-17T21:58:59+03:00 ===
+=== Baseline captured 2026-09-19T00:47:38+03:00 ===
 
 === test_8 ===
-('=== iso7816 decoder v1.8.0 ===',)
+('=== iso7816 decoder v1.9.1 ===',)
 ('etu recovered (samples):', 1237)
 iso7816-1: RST deasserted
 ('RST deasserted',)
@@ -36,7 +36,7 @@ Degradation metrics:
 RESULT: OK - capture fully explained (reader + CAT + valid retries)
 
 === test_7 ===
-('=== iso7816 decoder v1.8.0 ===',)
+('=== iso7816 decoder v1.9.1 ===',)
 ('etu recovered (samples):', 1236)
 iso7816-1: RST deasserted
 ('RST deasserted',)
@@ -77,7 +77,7 @@ Degradation metrics:
 RESULT: OK - capture fully explained (reader + CAT + valid retries)
 
 === xiaomi_phone_sample ===
-('=== iso7816 decoder v1.8.0 ===',)
+('=== iso7816 decoder v1.9.1 ===',)
 ('etu recovered (samples):', 53)
 (11673977, 'CHKSUM ERROR: ', 0, 'bits: ', [0, 0, 0, 1, 0, 0, 1, 1, 1, 1])
 iso7816-1: CHKSUM ERROR bits=[0, 0, 0, 1, 0, 0, 1, 1, 1, 1]
@@ -118,7 +118,7 @@ Degradation metrics:
 RESULT: OK - capture fully explained (reader + CAT + valid retries)
 
 === xiaomi_mi_a1_coldboot ===
-('=== iso7816 decoder v1.8.0 ===',)
+('=== iso7816 decoder v1.9.1 ===',)
 ('RST low at start: expecting cold-boot ATR',)
 iso7816-1: RST deasserted
 ('RST deasserted',)
@@ -145,7 +145,7 @@ Degradation metrics:
 RESULT: OK - capture fully explained (reader + CAT + valid retries)
 
 === 4gmodem_coldboot ===
-('=== iso7816 decoder v1.8.0 ===',)
+('=== iso7816 decoder v1.9.1 ===',)
 ('RST low at start: expecting cold-boot ATR',)
 iso7816-1: RST deasserted
 ('RST deasserted',)
@@ -186,7 +186,7 @@ Degradation metrics:
 RESULT: OK - capture fully explained (reader + CAT + valid retries)
 
 === samsung_A55_coldboot_new_cable ===
-('=== iso7816 decoder v1.8.0 ===',)
+('=== iso7816 decoder v1.9.1 ===',)
 ('RST low at start: expecting cold-boot ATR',)
 iso7816-1: RST deasserted
 ('RST deasserted',)
@@ -213,7 +213,7 @@ Degradation metrics:
 RESULT: OK - capture fully explained (reader + CAT + valid retries)
 
 === samsung_A55_coldboot_new_cable_sim2 ===
-('=== iso7816 decoder v1.8.0 ===',)
+('=== iso7816 decoder v1.9.1 ===',)
 ('RST low at start: expecting cold-boot ATR',)
 iso7816-1: RST deasserted
 ('RST deasserted',)
@@ -240,7 +240,7 @@ Degradation metrics:
 RESULT: OK - capture fully explained (reader + CAT + valid retries)
 
 === samsung_S21p_coldboot_new_cable ===
-('=== iso7816 decoder v1.8.0 ===',)
+('=== iso7816 decoder v1.9.1 ===',)
 ('RST low at start: expecting cold-boot ATR',)
 iso7816-1: RST deasserted
 ('RST deasserted',)
@@ -267,7 +267,7 @@ Degradation metrics:
 RESULT: OK - capture fully explained (reader + CAT + valid retries)
 
 === samsung_S21p_coldboot_new_cable_sim2 ===
-('=== iso7816 decoder v1.8.0 ===',)
+('=== iso7816 decoder v1.9.1 ===',)
 ('RST low at start: expecting cold-boot ATR',)
 iso7816-1: RST deasserted
 ('RST deasserted',)
@@ -368,6 +368,7 @@ test_short_pulse_start_edge_preserved (__main__.TestDeglitchEdges.test_short_pul
 test_is_desynced_all_zero_is_not_desync (__main__.TestDesyncHelpers.test_is_desynced_all_zero_is_not_desync) ... ok
 test_is_desynced_bad_sw (__main__.TestDesyncHelpers.test_is_desynced_bad_sw) ... ok
 test_is_desynced_clean_packets (__main__.TestDesyncHelpers.test_is_desynced_clean_packets) ... ok
+test_is_desynced_null_sw1_is_invalid (__main__.TestDesyncHelpers.test_is_desynced_null_sw1_is_invalid) ... ok
 test_is_desynced_oversized (__main__.TestDesyncHelpers.test_is_desynced_oversized) ... ok
 test_is_desynced_short_fragment (__main__.TestDesyncHelpers.test_is_desynced_short_fragment) ... ok
 test_max_tpdu_len (__main__.TestDesyncHelpers.test_max_tpdu_len) ... ok
@@ -392,6 +393,11 @@ test_build_packet_payload_passthrough (__main__.TestGsmtapFlags.test_build_packe
 test_build_packet_plain_res_zero (__main__.TestGsmtapFlags.test_build_packet_plain_res_zero) ... ok
 test_flag_constant_value (__main__.TestGsmtapFlags.test_flag_constant_value) ... ok
 test_pps_subtypes_are_standard (__main__.TestGsmtapFlags.test_pps_subtypes_are_standard) ... ok
+test_base_payload_without_rate (__main__.TestLineEventPayload.test_base_payload_without_rate) ... ok
+test_flag_constant (__main__.TestLineEventPayload.test_flag_constant) ... ok
+test_legacy_prefix_preserved (__main__.TestLineEventPayload.test_legacy_prefix_preserved) ... ok
+test_payload_with_clk_rate (__main__.TestLineEventPayload.test_payload_with_clk_rate) ... ok
+test_rate_absent_when_unknown (__main__.TestLineEventPayload.test_rate_absent_when_unknown) ... ok
 test_accepts_full_hold_fall (__main__.TestNextStartFall.test_accepts_full_hold_fall) ... ok
 test_finds_fall_after_threshold (__main__.TestNextStartFall.test_finds_fall_after_threshold) ... ok
 test_finds_fall_exactly_at_threshold (__main__.TestNextStartFall.test_finds_fall_exactly_at_threshold)
@@ -419,6 +425,6 @@ test_valid_cla_interindustry_classes (__main__.TestValidateT0Apdu.test_valid_cla
 test_valid_direct_sw_with_p3_nonzero (__main__.TestValidateT0Apdu.test_valid_direct_sw_with_p3_nonzero) ... ok
 
 ----------------------------------------------------------------------
-Ran 68 tests in 0.027s
+Ran 74 tests in 0.027s
 
 OK

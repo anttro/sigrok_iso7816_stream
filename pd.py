@@ -28,7 +28,7 @@ from .gsmtap_stream import (GsmtapStreamSender,
     GSMTAP_SIM_RST_EVENT, GSMTAP_SIM_VCC_EVENT,
     GSMTAP_FLAG_BAD_FCS)
 
-VERSION = '1.8.0'
+VERSION = '1.9.1'
 
 
 
@@ -106,10 +106,17 @@ class pcap_udp_pkt():
         return len(self.h) + len(self.data)
 
 def plausible_sw(sw1):
-    '''T=0 status word first byte sanity check.  SW1 is 0x9x (normal
-    processing) or 0x6x (warning/error classes).  Anything else means
-    the byte stream was almost certainly mis-framed.'''
-    return (0x60 <= sw1 <= 0x6F) or (0x90 <= sw1 <= 0x9F)
+    '''T=0 status word first byte sanity check.
+
+    Per ISO 7816-3:2006 §10.3.3 Table 11, an SW1 byte is '6X' or '9X'
+    EXCEPT '60': that value is the NULL procedure byte (card busy /
+    waiting-time extension), and ISO 7816-4 enforces '60' as an invalid
+    SW1.  Accepting it mis-frames "NULL + real SW1" as the status word --
+    the bogus "60 61" APDU ending, where the real SW1 (0x61) is eaten as
+    SW2.  The 6X classes are '61'..'6F' (normal '61XX'; warning '62XX'/
+    '63XX'; execution error '64XX'-'66XX'; checking error '67XX'-'6FXX'),
+    plus '9X' for normal processing.'''
+    return (0x61 <= sw1 <= 0x6F) or (0x90 <= sw1 <= 0x9F)
 
 
 def plausible_cla(cla):
@@ -272,6 +279,29 @@ def embedded_exchanges(buf):
     return out
 
 
+# --- line-event payload extension (RST/VCC, sub_type 0x10/0x11) ---
+# The base payload is [direction, level, flags]; byte 2 used to be reserved
+# and always 0.  Bit 0 of it now marks an appended CLK frequency (big-endian
+# uint32 Hz), so consumers that only read the first two bytes keep working.
+LINE_EVENT_FLAG_CLK_HZ = 0x01
+
+
+def line_event_payload(direction, level, clk_hz=None):
+    '''Build a RST/VCC line-event payload (GSMTAP sub_type 0x10/0x11).
+
+    Base form: [direction, level, flags] (3 bytes).  When `clk_hz` is
+    known, flags bit 0 is set and the frequency follows as a big-endian
+    uint32 in Hz, giving a 7-byte payload.  Old consumers read only the
+    first two bytes and ignore the rest, so the extension is backward
+    compatible.'''
+    flags = 0
+    extra = b''
+    if clk_hz:
+        flags |= LINE_EVENT_FLAG_CLK_HZ
+        extra = struct.pack('>I', int(clk_hz))
+    return bytes([direction & 0xFF, level & 0xFF, flags]) + extra
+
+
 MAX_TPDU_LEN = 271  # ISO 7816-3 T=0: header(5) + proc + 255 + SW(2) < 271
 IDLE_RESYNC_ETU = 4  # idle bit-periods marking an exchange boundary
 MAX_RESYNC_ATTEMPTS = 1024  # bail out if no idle gap found in that many tries
@@ -404,6 +434,20 @@ class Decoder(srd.Decoder):
             self.put(self.ss, self.ss, self.out_ann,
                      [Ann.ANN_WARN, ["dropped 0x%02x: %s" % (value, reason)]])
         return value
+
+    def _note_pre_sw(self, value, reason):
+        '''Log a byte consumed while scanning for the status word.
+
+        A T=0 NULL (0x60) is a legitimate wait extension -- cards emit them
+        in bursts while busy -- so it is reported like idle noise
+        (rate-limited) with its own reason instead of raising a warning.
+        Other non-SW bytes keep the call-site reason.'''
+        if value == 0x60:
+            self._note_discard(value,
+                               'NULL procedure byte (card busy) before '
+                               'status word', idle=True)
+        else:
+            self._note_discard(value, reason, idle=(value in (0x00, 0xFF)))
 
     def _consume_first(self):
         '''Consume the byte the last peek_byte() returned, removing it from
@@ -668,6 +712,21 @@ class Decoder(srd.Decoder):
             return (cand, cand_sn, cand, lvl, now)
         return (None, 0, confirmed, lvl, now)
 
+    def _clk_hz(self):
+        '''Return the measured CLK frequency in Hz, or None when unknown.
+
+        Uses the 16-edge average from _measure_clock_period().  The value is
+        a session constant: PPS changes F/D (CLK cycles per bit), not the
+        physical CLK rate.  Native mode only (the measurement is skipped in
+        sample_as_clock / detect modes).'''
+        spc = self._samples_per_clock
+        sr = self.samplerate
+        if spc and sr:
+            hz = int(round(float(sr) / float(spc)))
+            if 1 <= hz <= 100000000:
+                return hz
+        return None
+
     def line_events(self, pins):
         '''Check RST/VCC levels via level-stability hysteresis and emit
         events + annotations for confirmed level changes.
@@ -684,7 +743,9 @@ class Decoder(srd.Decoder):
             if emit_lvl is not None:
                 direction = 1 if emit_lvl == 0 else 0  # 1=asserted, 0=deasserted
                 self.emit_packet(GSMTAP_SIM_RST_EVENT,
-                                 bytes([direction, emit_lvl, 0]), edge_sn, edge_sn)
+                                 line_event_payload(direction, emit_lvl,
+                                                    self._clk_hz()),
+                                 edge_sn, edge_sn)
                 text = ('RST asserted' if emit_lvl == 0 else 'RST deasserted')
                 self.put(edge_sn, edge_sn, self.out_ann, [Ann.ANN_RST, [text]])
                 self.log(text)
@@ -2319,13 +2380,11 @@ class Decoder(srd.Decoder):
                             sw1 = self.read_byte()
                             if sw1 is None:
                                 return True
-                            if ((sw1 & 0xF0) == 0x60
-                                    or (sw1 & 0xF0) == 0x90):
+                            if plausible_sw(sw1):
                                 break
-                            self._note_discard(sw1,
-                                               'non-SW byte before status word '
-                                               '(P3-bounded response)',
-                                               idle=(sw1 in (0x00, 0xFF)))
+                            self._note_pre_sw(
+                                sw1, 'non-SW byte before status word '
+                                     '(P3-bounded response)')
                         if sw1 is None:
                             return True
                         sw2 = self.read_byte()
@@ -2341,8 +2400,7 @@ class Decoder(srd.Decoder):
                         if (p3 == 0):
                             # P3=0 (Le=0): no command data.  Card sends
                             # response data + SW, or SW directly (no ACK).
-                            if ((pb0 & 0xF0) == 0x60
-                                    or (pb0 & 0xF0) == 0x90):
+                            if plausible_sw(pb0):
                                 # pb0 is SW1: card sent SW directly.
                                 sw2 = self.read_byte()
                                 if sw2 is None:
@@ -2356,8 +2414,7 @@ class Decoder(srd.Decoder):
                                     b = self.read_byte()
                                     if b is None:
                                         return True
-                                    if ((b & 0xF0) == 0x60
-                                            or (b & 0xF0) == 0x90):
+                                    if plausible_sw(b):
                                         sw2 = self.read_byte()
                                         if sw2 is None:
                                             return True
@@ -2365,10 +2422,9 @@ class Decoder(srd.Decoder):
                                         packet.append(sw2)
                                         got_sw = True
                                         break
-                                    self._note_discard(b,
-                                                       'non-SW byte in P3=0 '
-                                                       'response',
-                                                       idle=(b in (0x00, 0xFF)))
+                                    self._note_pre_sw(b,
+                                                      'non-SW byte in P3=0 '
+                                                      'response')
                         else:
                             # Case 3/4: P3 command-data bytes, then
                             # procedure byte.
@@ -2388,8 +2444,7 @@ class Decoder(srd.Decoder):
                                         b = self.read_byte()
                                         if b is None:
                                             return True
-                                        if ((b & 0xF0) == 0x60
-                                                or (b & 0xF0) == 0x90):
+                                        if plausible_sw(b):
                                             sw2 = self.read_byte()
                                             if sw2 is None:
                                                 return True
@@ -2397,10 +2452,9 @@ class Decoder(srd.Decoder):
                                             packet.append(sw2)
                                             got_sw = True
                                             break
-                                        self._note_discard(b,
-                                                           'non-SW byte in case-4 '
-                                                           'response',
-                                                           idle=(b in (0x00, 0xFF)))
+                                        self._note_pre_sw(b,
+                                                          'non-SW byte in case-4 '
+                                                          'response')
                                     break
                                 elif (pb == (bIns ^ 0x01)
                                         or pb == ((bIns ^ 0xFF) ^ 0x01)):
@@ -2430,8 +2484,7 @@ class Decoder(srd.Decoder):
                                             return True
                                         packet.append(b)
                                     continue
-                                elif ((pb & 0xF0) == 0x60
-                                        or (pb & 0xF0) == 0x90):
+                                elif plausible_sw(pb):
                                     # SW1: case 3, no response data.
                                     sw2 = self.read_byte()
                                     if sw2 is None:
@@ -2445,8 +2498,7 @@ class Decoder(srd.Decoder):
                                     # skip non-SW bytes (e.g. 0xFF
                                     # turnaround artifacts).
                                     for _ in range(MAX_TPDU_LEN):
-                                        if ((pb & 0xF0) == 0x60
-                                                or (pb & 0xF0) == 0x90):
+                                        if plausible_sw(pb):
                                             sw2 = self.read_byte()
                                             if sw2 is None:
                                                 return True
@@ -2454,10 +2506,9 @@ class Decoder(srd.Decoder):
                                             packet.append(sw2)
                                             got_sw = True
                                             break
-                                        self._note_discard(pb,
-                                                           'non-SW byte during '
-                                                           'unexpected-byte scan',
-                                                           idle=(pb in (0x00, 0xFF)))
+                                        self._note_pre_sw(pb,
+                                                          'non-SW byte during '
+                                                          'unexpected-byte scan')
                                         pb = self.read_byte()
                                         if pb is None:
                                             return True
@@ -2503,7 +2554,7 @@ class Decoder(srd.Decoder):
                                 if b is None:
                                     break
                                 packet.append(b)
-                        elif ((pb & 0xF0) == 0x60 or (pb & 0xF0) == 0x90):
+                        elif plausible_sw(pb):
                             # SW1: append SW2; the exchange is complete.
                             sw2 = self.read_byte()
                             if sw2 is None:

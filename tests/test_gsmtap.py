@@ -79,22 +79,35 @@ class TestDesyncHelpers(unittest.TestCase):
         cls.gs, cls.pd = _load_iso7816()
 
     def test_plausible_sw_accepts_valid_classes(self):
-        for sw1 in list(range(0x60, 0x70)) + list(range(0x90, 0xA0)):
+        # ISO 7816-3 §10.3.3 Table 11: SW1 is '6X' or '9X', except '60'
+        # (the NULL procedure byte).
+        for sw1 in list(range(0x61, 0x70)) + list(range(0x90, 0xA0)):
             self.assertTrue(self.pd.plausible_sw(sw1), hex(sw1))
 
     def test_plausible_sw_rejects_garbage(self):
-        for sw1 in (0x00, 0x01, 0x3B, 0x3F, 0xA0, 0xFF, 0x88, 0x5F):
+        for sw1 in (0x00, 0x01, 0x3B, 0x3F, 0x5F, 0x60, 0x88, 0xA0, 0xFF):
             self.assertFalse(self.pd.plausible_sw(sw1), hex(sw1))
 
     def test_max_tpdu_len(self):
         self.assertEqual(self.pd.MAX_TPDU_LEN, 271)
 
     def test_is_desynced_clean_packets(self):
-        # 7-byte: header(5) + proc(1) + SW2(1) ending in a 9x SW1
-        self.assertFalse(self.pd.is_desynced(b'\x00\xa4\x00\x04\x02\x60\x90'))
+        # header(5) + SW1 SW2 (P3=0 direct status word)
+        self.assertFalse(self.pd.is_desynced(b'\x00\xa4\x00\x04\x00\x90\x00'))
         # ACK-style GET RESPONSE (header + proc + payload + SW 9000)
         self.assertFalse(self.pd.is_desynced(
             b'\x00\xc0\x00\x00\x25\xc0\x62\x23\x90\x00'))
+
+    def test_is_desynced_null_sw1_is_invalid(self):
+        # Regression (v1.9.1): the T=0 NULL byte 0x60 is not SW1.  The
+        # wire "NULL 0x60 + real SW1 0x61" was mis-framed as the status
+        # word "60 61" (real SW1 eaten as SW2).  It must be flagged, not
+        # accepted (trace: SELECT MF -> NULL wait -> 61 29).
+        pkt = b'\x00\xa4\x00\x04\x02\x3f\x00\x60\x61'
+        valid, reason = self.pd.validate_t0_apdu(pkt)
+        self.assertFalse(valid, 'NULL must not pass as SW1')
+        self.assertIn('invalid SW1', reason)
+        self.assertTrue(self.pd.is_desynced(pkt))
 
     def test_is_desynced_short_fragment(self):
         # 5-byte header-only (INVALID-procedure residue) -- no SW read
@@ -566,6 +579,40 @@ class TestEndOfStream(unittest.TestCase):
     def test_systemerror_propagates(self):
         with self.assertRaises(SystemError):
             self._decode_raising(SystemError).decode()
+
+
+class TestLineEventPayload(unittest.TestCase):
+    """RST/VCC line-event payloads (GSMTAP sub_type 0x10/0x11), including the
+    CLK-frequency extension (v1.9.0)."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.gs, cls.pd = _load_iso7816()
+
+    def test_base_payload_without_rate(self):
+        self.assertEqual(self.pd.line_event_payload(0, 1), b'\x00\x01\x00')
+        self.assertEqual(self.pd.line_event_payload(1, 0, None), b'\x01\x00\x00')
+
+    def test_payload_with_clk_rate(self):
+        p = self.pd.line_event_payload(0, 1, 4800000)
+        self.assertEqual(len(p), 7)
+        self.assertEqual(p[0], 0)              # deasserted
+        self.assertEqual(p[1], 1)              # resulting level: high
+        self.assertEqual(p[2], self.pd.LINE_EVENT_FLAG_CLK_HZ)
+        self.assertEqual(int.from_bytes(p[3:7], 'big'), 4800000)
+
+    def test_rate_absent_when_unknown(self):
+        self.assertEqual(len(self.pd.line_event_payload(1, 0, None)), 3)
+        self.assertEqual(len(self.pd.line_event_payload(1, 0, 0)), 3)
+
+    def test_legacy_prefix_preserved(self):
+        # Consumers that read only bytes 0-1 (pysniff decode_line_event)
+        # must see the same direction/level as before.
+        p = self.pd.line_event_payload(1, 0, 3579000)
+        self.assertEqual(p[:2], b'\x01\x00')
+
+    def test_flag_constant(self):
+        self.assertEqual(self.pd.LINE_EVENT_FLAG_CLK_HZ, 0x01)
 
 
 if __name__ == '__main__':

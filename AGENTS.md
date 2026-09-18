@@ -182,7 +182,11 @@ data), so the false-positive rate is very low.  The checks are:
    `0x84`, `0xA0`, `0xB0`).
 3. INS byte is plausible: not `0x00`, not in `0x6x`/`0x9x` (status-word
    collision), and the least-significant bit is `0`.
-4. The penultimate byte (SW1) is in `0x6x` or `0x9x`.
+4. The penultimate byte (SW1) is in `0x61`–`0x6F` or `0x90`–`0x9F`.
+   `0x60` is explicitly invalid: it is the T=0 NULL procedure byte
+   (ISO 7816-3 §10.3.3 Table 11 marks SW1 as `'6X'` **except `'60'`**;
+   ISO 7816-4 enforces `'60'` as an invalid SW1), so a "NULL + real SW1"
+   pair must never be accepted as a status word.
 
 The current validation deliberately does **not** enforce P3-based length
 constraints, because a card may reject a command and send the status word
@@ -303,6 +307,58 @@ S21p 399/375, target S21p_coldboot 369, all `RESULT: OK`, 0 CONCAT);
 Known limitation: no on-disk fixture reproduces the exact live failure (all
 real captures contain a 372 ATR), so end-to-end proof needs a re-captured
 `.sr` from the failing phone; the unit tests cover the loop-escape logic.
+
+### v1.9.1: T=0 NULL is not an SW1 (fixes bogus "60 61" APDU endings)
+
+The "scan for SW1" loops accepted any byte with high nibble `0x6` as a
+status word, including the T=0 **NULL procedure byte `0x60`** (card busy /
+waiting-time extension).  A card that holds the terminal with NULLs while
+busy was therefore mis-framed: on the phone/cold-boot traces the SELECT MF
+wire flow is `00 a4 00 04 02` → ACK `a4` → command data `3f 00` → ~1.4 s of
+NULL `60` → real SW `61 29`.  The decoder took `60` as SW1 and the real
+`0x61` as SW2, emitting `…3f00 6061` and leaving the real SW2 (`0x29`) on
+the wire, where it was discarded as a suspicious CLA — and the bogus packet
+even passed `validate_t0_apdu()` because `plausible_sw()` accepted `0x60`.
+
+- `plausible_sw()` now accepts `0x61`–`0x6F` and `0x90`–`0x9F` only.
+  Authority: ISO 7816-3:2006 §10.3.3 Table 11 — "If the value is `'6X'`
+  or `'9X'`, **except for `'60'`**, it is a SW1 byte"; the note adds that
+  ISO 7816-4 enforces `'60'` as an invalid SW1.  (UICC_SPECS.md §1.8
+  classes: normal `'9000'`/`'61XX'`; warning `'62XX'`/`'63XX'`; execution
+  error `'64XX'`–`'66XX'`; checking error `'67XX'`–`'6FXX'`.)
+- Every SW1-detection site now uses `plausible_sw()`: the edge ACK scan,
+  the P3=0 direct-SW check and response scan, the case-4 response scan,
+  the case-3 SW1 check, the unexpected-byte scan, and the ATR path.
+- NULLs met while scanning for the status word are logged as rate-limited
+  wait extensions via the new `_note_pre_sw()` (cards emit them in bursts,
+  so they must not flood the log or raise warnings); other non-SW bytes
+  keep their call-site reason.
+- `tools/vs_reader.py::_plausible_sw()` mirrors the fix.
+- Tests: `plausible_sw` vectors updated (`0x60` now rejected; accepts
+  start at `0x61`), plus a regression vector for the
+  `00 a4 00 04 02 3f 00 60 61` artifact (invalid SW1 / desynced).
+
+The fix is count-neutral (the same bytes are consumed; only the SW bytes
+change), so `tests/baseline.txt` differs only by the version line and the
+new test listing.  74/74 unit tests.  VERSION -> 1.9.1.
+
+### v1.9.0: CLK frequency in RST events
+
+RST line events (sub_type 0x10) now append the measured CLK frequency when
+it is known: `[direction, level, flags, clk_hz_be32]`, with `flags` bit 0
+(`LINE_EVENT_FLAG_CLK_HZ`) set and the frequency as a big-endian uint32 in
+Hz (7-byte payload).  An unknown rate keeps the 3-byte payload, so
+consumers that read only the first two bytes (e.g. pysniff's
+`decode_line_event`) are unaffected.  The value is the existing 16-edge
+average (`samplerate / _samples_per_clock`, see `_measure_clock_period`);
+PPS changes F/D, not the CLK rate, so one measurement per session is
+enough.  VCC events (0x11) are unchanged.  Purpose: consumers can compute
+the actual data rate as `clk_hz × D / F` from the Fi/Di negotiated in the
+ATR/PPS.  Ordering: the RST deassert event usually precedes the ATR event
+(the 10 ms hysteresis lands mid-ATR for full ATRs), but a short ATR can
+invert that, so consumers take the rate from any RST event.  Wire
+extension is backward compatible; 73/73 unit tests; baseline regenerated
+and IDENTICAL (it tracks no RST payload metrics).  VERSION -> 1.9.0.
 
 ### v1.8.0: PPS emitted as standard request + response packets
 
@@ -559,9 +615,9 @@ window may be filtering real start bits.
 |------|---------|
 | ACK (== INS or == ~INS) | Full data match: card acknowledges and expects all P3 data bytes |
 | INS^0x01 or ~INS^0x01 | Single-byte match: card validates syntax but processes data one byte at a time |
-| 0x60 | NULL: card busy, wait for next procedure byte |
+| 0x60 | NULL: card busy, wait for next procedure byte (never an SW1) |
 | 0x9E / 0x9F | Extended-length: next byte L = number of response data bytes, then SW |
-| SW1 (0x6x / 0x9x) | Status word: exchange complete |
+| SW1 (`0x61`–`0x6F` / `0x9X`) | Status word: exchange complete |
 
 ##### CLA (Class) Byte — Interindustry Structure
 
@@ -642,11 +698,13 @@ comments in `gsmtap_stream.py`).  It deviates in two documented ways:
 `GSMTAP_FLAG_BAD_FCS` writes flags into the header `res` byte, which
 official gsmtap.h reserves.  The `res`-byte carriage is this decoder's own
 extension (upstream simtrace2 never sets `res`); the semantics mirror
-simtrace2's per-message USB data flags.
+simtrace2's per-message USB data flags.  0x10 RST events additionally
+append the measured CLK frequency when known
+(`[direction, level, flags, clk_hz_be32]`; see "v1.9.0" below).
 
 ### Versioning
 
-The decoder version is defined in `pd.py` as `VERSION = '1.8.0'`.
+The decoder version is defined in `pd.py` as `VERSION = '1.9.1'`.
 The version is printed to the log on decoder startup.
 
 ### Testing after decoder changes

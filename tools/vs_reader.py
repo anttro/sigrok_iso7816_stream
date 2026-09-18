@@ -126,7 +126,9 @@ def embedded_exchanges(buf):
 
 
 def _plausible_sw(sw1):
-    return (0x60 <= sw1 <= 0x6F) or (0x90 <= sw1 <= 0x9F)
+    # Mirror of plausible_sw in pd.py: SW1 is '6X'/'9X' except '60'
+    # (the T=0 NULL procedure byte; ISO 7816-4 makes it an invalid SW1).
+    return (0x61 <= sw1 <= 0x6F) or (0x90 <= sw1 <= 0x9F)
 
 
 def _plausible_ins(ins):

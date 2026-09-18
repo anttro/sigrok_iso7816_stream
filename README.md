@@ -83,7 +83,7 @@ GSMTAP header: version 2, type SIM (0x04), UDP port 4729.
 | 0x01 | ATR | raw ATR bytes |
 | 0x02 | PPS request | raw PPS request bytes |
 | 0x03 | PPS response | raw PPS response bytes |
-| 0x10 | RST event (custom) | `[direction, level, 0x00]` |
+| 0x10 | RST event (custom) | `[direction, level, flags, clk_hz_be32]` — CLK frequency appended when known |
 | 0x11 | VCC event (custom) | `[direction, level, 0x00]` |
 
 Event payload byte semantics:
@@ -95,6 +95,13 @@ Event payload byte semantics:
 0x00-0x03 match libosmocore's gsmtap.h: standard values and payloads
 (PPS request and response are emitted as separate packets).  0x10/0x11
 are custom extensions not defined in libosmocore's gsmtap.h.
+
+RST events carry the measured CLK frequency when it is known: `flags`
+bit 0 is then set and the frequency follows as a big-endian uint32 in Hz
+(7-byte payload).  When the rate is not yet measured the payload stays
+3 bytes, so consumers that read only the first two bytes are unaffected.
+Combined with the F/D negotiated in the ATR/PPS, the data rate is
+`clk_hz × D / F` bits/s.
 
 Header extensions: flags such as `GSMTAP_FLAG_BAD_FCS` are written into
 the header `res` byte, which official gsmtap.h marks reserved (RFU).
