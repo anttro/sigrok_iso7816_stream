@@ -606,8 +606,8 @@ class TestLineEventPayload(unittest.TestCase):
         self.assertEqual(len(self.pd.line_event_payload(1, 0, 0)), 3)
 
     def test_legacy_prefix_preserved(self):
-        # Consumers that read only bytes 0-1 (pysniff decode_line_event)
-        # must see the same direction/level as before.
+        # Consumers that read only bytes 0-1 (SIMtrace Analyser's
+        # decode_line_event) must see the same direction/level as before.
         p = self.pd.line_event_payload(1, 0, 3579000)
         self.assertEqual(p[:2], b'\x01\x00')
 

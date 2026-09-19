@@ -348,7 +348,7 @@ RST line events (sub_type 0x10) now append the measured CLK frequency when
 it is known: `[direction, level, flags, clk_hz_be32]`, with `flags` bit 0
 (`LINE_EVENT_FLAG_CLK_HZ`) set and the frequency as a big-endian uint32 in
 Hz (7-byte payload).  An unknown rate keeps the 3-byte payload, so
-consumers that read only the first two bytes (e.g. pysniff's
+consumers that read only the first two bytes (e.g. SIMtrace Analyser's
 `decode_line_event`) are unaffected.  The value is the existing 16-edge
 average (`samplerate / _samples_per_clock`, see `_measure_clock_period`);
 PPS changes F/D, not the CLK rate, so one measurement per session is
