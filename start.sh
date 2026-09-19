@@ -80,7 +80,7 @@ Options:
   --restart-delay=S Seconds to wait between restarts (default: 2).
   -h, --help        Show this help
 
-GSMTAP stream defaults to 127.0.0.1:4729 (simtrace2-pysniff compatible).
+GSMTAP stream defaults to 127.0.0.1:4729 (SIMtrace Analyser compatible).
 
 Capture runs continuously until Ctrl+C.  stdin is detached from sigrok-cli
 so pressing keys/Enter in the terminal does NOT stop the capture (sigrok's

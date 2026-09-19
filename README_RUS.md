@@ -10,10 +10,10 @@ Saleae) ведёт себя как сниффер SIMtrace2:
 SIM-карта ⇄ ридер (пассивный съём с контактов)
     → логический анализатор FX2 (fx2lafw, 8 каналов, до 24 МГц)
     → sigrok-cli + декодер iso7816
-    → GSMTAP UDP :4729  →  [simtrace2-pysniff](https://github.com/anttro/simtrace2-pysniff) / Wireshark
+    → GSMTAP UDP :4729  →  [SIMtrace Analyser](https://github.com/anttro/simtrace-analyser) / Wireshark
 ```
 
-[simtrace2-pysniff](https://github.com/anttro/simtrace2-pysniff) —
+[SIMtrace Analyser](https://github.com/anttro/simtrace-analyser) —
 рекомендуемый инструмент для визуализации живых трасс и просмотра
 сохранённых записей; он также умеет импортировать и экспортировать
 GSMTAP pcap-файлы (включая PCAP, который этот декодер пишет через опцию
@@ -418,7 +418,7 @@ start.bat                   rem запись + поток GSMTAP
 # ATR+PPS+54 APDU из записи ридера test_8 (~19 с декодирования)
 # Поток GSMTAP проверен через tshark (ATR/APDU разбираются нативно),
 # кастомные события 0x10/0x11 — через UDP-слушатель, и сквозным путём
-# в сервер simtrace2-pysniff (POST /api/capture/start → decode → stop).
+# в сервер SIMtrace Analyser (POST /api/capture/start → decode → stop).
 ```
 
 Синтетический генератор VCD, покрывающий краевые случаи RST/VCC, живёт в

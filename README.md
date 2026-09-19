@@ -8,10 +8,10 @@ behave like a SIMtrace2 sniffer:
 SIM card ⇄ reader (passive tap on the contacts)
     → FX2 logic analyzer (fx2lafw, 8ch, 24MHz max)
     → sigrok-cli + iso7816 decoder
-    → GSMTAP UDP :4729  →  [simtrace2-pysniff](https://github.com/anttro/simtrace2-pysniff) / Wireshark
+    → GSMTAP UDP :4729  →  [SIMtrace Analyser](https://github.com/anttro/simtrace-analyser) / Wireshark
 ```
 
-[simtrace2-pysniff](https://github.com/anttro/simtrace2-pysniff) is the
+[SIMtrace Analyser](https://github.com/anttro/simtrace-analyser) is the
 recommended tool for visualising live traces and viewing saved captures —
 it can also import/export GSMTAP pcap files (including the PCAP written by
 this decoder's `pcap_file=<path>` option).
@@ -398,7 +398,7 @@ Verified against the upstream example captures:
 # ATR+PPS+54 APDUs from the test_8 reader capture (~19s decode)
 # GSMTAP stream verified with tshark (ATR/APDU dissected natively),
 # custom 0x10/0x11 events verified with a UDP listener, and end-to-end
-# into simtrace2-pysniff server (POST /api/capture/start → decode → stop).
+# into the SIMtrace Analyser server (POST /api/capture/start → decode → stop).
 ```
 
 A synthetic VCD generator covering RST/VCC edge cases lives in the project

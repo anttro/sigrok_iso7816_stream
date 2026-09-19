@@ -367,7 +367,7 @@ The PPS exchange was previously emitted as a single packet under sub_type
 concatenated — a deviation from libosmocore's gsmtap.h.  It is now split
 into the two standard subtypes: 0x02 (`PPS_REQ`, raw request bytes, span
 `ss..es_req`) and 0x03 (`PPS_RSP`, raw response bytes, span
-`es_req..end`).  Wireshark now dissects both halves, and simtrace2-pysniff
+`es_req..end`).  Wireshark now dissects both halves, and SIMtrace Analyser
 needs no change: its pcap importer already maps 0x03 to `pps` and
 `_decode_pps()` parses any 0xFF-leading frame (the response frame also
 starts with 0xFF).  The PPS annotation and stderr log lines are unchanged.

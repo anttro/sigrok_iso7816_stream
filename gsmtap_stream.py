@@ -2,7 +2,7 @@
 ## GSMTAP live streaming for the ISO 7816 decoder.
 ##
 ## Sends decoded events as GSMTAP-SIM UDP packets, compatible with
-## simtrace2-sniff, simtrace2-pysniff and the GSMTAP dissector in
+## simtrace2-sniff, SIMtrace Analyser and the GSMTAP dissector in
 ## Wireshark.
 ##
 ## This program is free software; you can redistribute it and/or modify
