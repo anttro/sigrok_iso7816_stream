@@ -488,6 +488,7 @@ re-frame eliminated the last multi-exchange swallow family on
 | test_7 | constant | ~43 | 372 (standard) | Direct | PC/SC reader, warm resets |
 | xiaomi | gated/stopped | ~53 | recovered from DATA | Direct | Phone, mid-session |
 | samsung | gated/stopped | ~72 | 16 (F=512/D=32) | Direct | Phone, non-standard F/D, STK menu |
+| alcor_reader | constant | ~53 | 16 (F=512/D=32) | Direct | PC/SC reader, CLK 4.0 MHz at ATR -> 4.8 MHz after PPS |
 
 The decoder auto-detects the ETU from the trace and selects the appropriate
 bit reader (CLK-sync for constant CLK, edge-list for gated/stopped CLK).

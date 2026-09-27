@@ -65,7 +65,10 @@ MAX_TPDU_LEN = 271
 # data region, followed by its P3 data bytes and an interior status word.
 # These constants bound detector precision (empirically tuned on all 10
 # example traces: 0 hits on clean traces, every Samsung/xiaomi family hit).
-EMBEDDED_CLA = VALID_CLA
+# Mirror of pd.py: real command classes only -- the structural 0x4x/0x5x
+# forms that _plausible_cla() tolerates only add payload false hits.
+EMBEDDED_CLA = frozenset(
+    cla for cla in VALID_CLA if (cla & 0xF0) not in (0x40, 0x50))
 # Commands that actually occur on these cards' bus (T=0 + STK/CAT).
 EMBEDDED_INS = frozenset((
     0x12, 0x14, 0x20, 0x44, 0x70, 0x88,

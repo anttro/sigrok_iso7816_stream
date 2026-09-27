@@ -79,6 +79,13 @@ run_test "xiaomi_mi_a1_coldboot" timeout 300 sigrok-cli -i examples/xiaomi_mi_a1
 # 4gmodem_coldboot_sample — same pre-power-up capture shape, modem SIM.
 run_test "4gmodem_coldboot" timeout 300 sigrok-cli -i examples/4gmodem_coldboot_sample.sr -P iso7816:clk=CLK:data=DATA:rst=RST:vcc=VCC:clock_option=native:protocol=T=0:rst_detect=true:vcc_detect=true:gsmtap_enable=false:pcap_file=/tmp/out.pcap -A iso7816
 
+# alcor_reader_sample — PC/SC reader (Alcor).  Regression fixture for the PPS
+# clock upshift: CLK is 4.0 MHz at the ATR but 4.8 MHz after PPS (FI/DI
+# 512/32 -> 16 CLK/bit = 3.333 samples/CLK at 16 MHz), so the samples-per-clock
+# measured at the ATR goes stale; the first post-PPS character must re-measure
+# it or no post-PPS APDU frames.
+run_test "alcor_reader_sample" timeout 300 sigrok-cli -i examples/alcor_reader_sample.sr -P iso7816:clk=CLK:data=DATA:rst=RST:vcc=VCC:clock_option=native:rst_detect=true:gsmtap_enable=false:pcap_file=/tmp/out.pcap -A iso7816
+
 # samsung_A55_coldboot_new_cable — Samsung A55 with the new short cable
 # (30 mm wires, external pull resistors GND->VCC and VCC->DATA), named
 # channels DATA/VCC/RST/CLK on bits 0/2/4/5.

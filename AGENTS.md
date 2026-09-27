@@ -18,6 +18,7 @@ Every change to `pd.py` must be followed by running the full test suite:
    for trace in test_8_raw16 test_7_raw16 xiaomi_phone_sample \
                samsung_phone_sample \
                xiaomi_mi_a1_coldboot_sample 4gmodem_coldboot_sample \
+               alcor_reader_sample \
                samsung_A55_coldboot_new_cable samsung_A55_coldboot_new_cable_sim2 \
                samsung_S21p_coldboot_new_cable samsung_S21p_coldboot_new_cable_sim2; do
        # Run sigrok-cli and vs_reader as shown below
@@ -307,6 +308,54 @@ S21p 399/375, target S21p_coldboot 369, all `RESULT: OK`, 0 CONCAT);
 Known limitation: no on-disk fixture reproduces the exact live failure (all
 real captures contain a 372 ATR), so end-to-end proof needs a re-captured
 `.sr` from the failing phone; the unit tests cover the loop-escape logic.
+
+### v1.9.2: PPS CLK upshift + exact CLK-edge projection (new reader support)
+
+Two timing bugs surfaced by `examples/alcor_reader_sample.sr`, a PC/SC reader
+that changes the CLK frequency at PPS: 4.0 MHz at the ATR, 4.8 MHz after
+(raise-to-raise 4.000 -> 3.333 samples at 16 MHz), with FI/DI still 512/32 =
+16 CLK/bit.  Before the fix the whole post-PPS session framed nothing.
+
+- **Stale samples-per-clock after PPS.**  The native/CLK-sync path assumed
+  "the CLK period is unchanged by PPS" and kept the period measured at the
+  ATR, so the post-PPS ETU was 16 x 4.0 = 64 samples instead of the real
+  16 x 3.333 = 53.33 -- every byte was mis-sampled.  `handle_pps()` now sets
+  `_clk_remeasure_pending`; `_read_byte_clk()` consumes it in the first
+  post-PPS character (CLK is guaranteed to be running inside a frame),
+  re-runs `_measure_clock_period()` and accounts the measurement's 16 edges
+  as the first edges of the frame (`bit_samples` refreshed).
+- **Edge-skip deficit on fractional periods.**  `_wait_clk_rising()` used to
+  "skip (n - 2) cycles by samples, then take 2 edges".  With a period that is
+  a fraction of a sample the skip under-covers by ~1 edge per call: simulated
+  against the real trace, 144 edges were consumed where 152 were requested,
+  so the samples slid ~0.5 ETU early by the parity bit -- in 513/513 CHKSUM
+  cases the "parity" sample read the last data bit.  It now projects n
+  periods ahead of the edge it is sitting on, skips to (target - half a
+  period) and takes one edge: exact for any period, non-accumulating, one
+  wait() per call.  Without a period estimate it waits each edge exactly.
+- **CONCAT detector precision.**  The Alcor GET RESPONSE payload (a
+  secured-packet byte run "40 70 70 61 15" + an SW-like byte 21 later)
+  false-hit the embedded-exchange scan through the structural 0x4x CLA that
+  `plausible_cla()` tolerates for resync robustness.  The detector's CLA set
+  now excludes 0x4x/0x5x (no CAT traffic uses them; every tuned
+  true-positive vector uses 0x00/0x01/0x08/0x80), mirrored in
+  `tools/vs_reader.py` with a regression vector in `tests/test_gsmtap.py`.
+
+Effect on the suite (baseline regenerated; APDU counts and `RESULT: OK`
+unchanged everywhere, 0 CONCAT):
+
+| trace | CHKSUM lines before | after |
+|---|---|---|
+| alcor_reader_sample (new fixture) | no framing at all (0 APDUs) | 2 (1 idle artifact), 48 APDUs |
+| xiaomi_phone_sample | 7698 | 2 (1 event) |
+| 4gmodem_coldboot | 7218 | 0 |
+| samsung_S21p_coldboot_new_cable_sim2 | 394 | 0 |
+| test_8 / test_7 / others | 0 | 0 |
+
+The xiaomi/4gmodem/S21p_sim2 counts had been read as dirty-wire parity
+noise -- they were this decoder bug.  `tools/capture_baseline.sh` gains the
+alcor fixture (local-only, like every `examples/` trace).  75/75 unit tests.
+VERSION -> 1.9.2.
 
 ### v1.9.1: T=0 NULL is not an SW1 (fixes bogus "60 61" APDU endings)
 
@@ -704,7 +753,7 @@ append the measured CLK frequency when known
 
 ### Versioning
 
-The decoder version is defined in `pd.py` as `VERSION = '1.9.1'`.
+The decoder version is defined in `pd.py` as `VERSION = '1.9.2'`.
 The version is printed to the log on decoder startup.
 
 ### Testing after decoder changes

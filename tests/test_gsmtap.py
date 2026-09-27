@@ -402,6 +402,17 @@ class TestEmbeddedExchanges(unittest.TestCase):
         # ATR-recovery fragment (header + 3F 00 + 6125) must not hit.
         self.assertEqual(self._hits('00a40004023f006125'), [])
 
+    def test_clean_secured_packet_payload_alcor(self):
+        # alcor_reader[46] (n=87): GET RESPONSE whose 80-byte payload holds a
+        # secured-packet run "40 70 70 61 15" 21 bytes before an SW-like byte;
+        # the reader follows with 00 c0 00 00 19 -- a clean single exchange.
+        # The structural 0x4x CLA must not turn payload bytes into a hit.
+        h = ('80c2000050d14e82028381060291978b4440048111227ff64070706115'
+             '3500350270000030151601252500000018ed15e8476126aa9cacbbe8f4'
+             '735f962016e3c6e30a26af20c02bad2a34bdf49f152e263bc7390a6119')
+        self.assertTrue(self.pd.validate_t0_apdu(bytes.fromhex(h))[0])
+        self.assertEqual(self._hits(h), [])
+
     def test_a55_u1_concat(self):
         # A55[296] (n=70): phantom-00 (buffer {01}) CLA + slip prefix.
         h = ('000402a43f00612501c0000025c062238202782183023f00a5098001'

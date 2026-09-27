@@ -28,7 +28,7 @@ from .gsmtap_stream import (GsmtapStreamSender,
     GSMTAP_SIM_RST_EVENT, GSMTAP_SIM_VCC_EVENT,
     GSMTAP_FLAG_BAD_FCS)
 
-VERSION = '1.9.1'
+VERSION = '1.9.2'
 
 
 
@@ -217,10 +217,15 @@ def is_desynced(packet):
 # data region, followed by its P3 data bytes and an interior status word.
 # These constants bound detector precision (empirically tuned on all 10
 # example traces: 0 hits on clean traces, every Samsung/xiaomi family hit).
-# A swallowed header's CLA is validated with the same structural rule as the
-# decoder itself (see plausible_cla): interindustry classes including the
-# logical-channel numbers 0x01-0x03 are legitimate first bytes of a command.
-EMBEDDED_CLA = frozenset(cla for cla in range(256) if plausible_cla(cla))
+# A swallowed header's CLA is a real command class byte: interindustry
+# classes including the logical-channel numbers 0x01-0x03.  The structural
+# 0x4x/0x5x forms that plausible_cla() tolerates for resync robustness are
+# excluded here -- no CAT traffic uses them, and accepting them makes payload
+# bytes false-hit (Alcor secured-packet payload: "40 70 70 61 15" + an
+# SW-like byte 21 later).
+EMBEDDED_CLA = frozenset(
+    cla for cla in range(256)
+    if plausible_cla(cla) and (cla & 0xF0) not in (0x40, 0x50))
 # Commands that actually occur on these cards' bus (T=0 + STK/CAT).
 EMBEDDED_INS = frozenset((
     0x12, 0x14, 0x20, 0x44, 0x70, 0x88,
@@ -535,6 +540,12 @@ class Decoder(srd.Decoder):
         # Forces _measure_etu() on the next decode_step() cycle so the
         # decoder re-locks to the new ETU from the live DATA line.
         self._pps_speed_changed = False
+        # Set by handle_pps() on the native path: some readers also change
+        # the CLK frequency at the PPS speed switch (Alcor reader: 4.0 ->
+        # 4.8 MHz with FI/DI 512/32), which invalidates the samples-per-clock
+        # period measured at the ATR.  _read_byte_clk() re-measures it inside
+        # the first post-PPS character, where CLK is guaranteed to be running.
+        self._clk_remeasure_pending = False
         # Count of times the ATR hunt failed to find a valid TS byte --
         # bounds the "keep hunting" loop so a mid-session sniffer (no ATR
         # ever present) eventually falls back to T=0 parsing instead of
@@ -1208,28 +1219,33 @@ class Decoder(srd.Decoder):
         '''Wait for n CLK rising edges.  Returns False on end-of-capture.
 
         CLK runs continuously for the whole of a character (Clock Stop only
-        happens between characters), so within a byte it is safe to skip most
-        of the way by samples and then land on the exact rising edge.  This
-        keeps the edge-exactness of CLK-edge timing without paying one wait()
-        per CLK cycle.  Lands within +/-1 CLK cycle of the target edge, which
-        is far inside the stable region of a bit (a bit is held for the whole
-        ETU).'''
+        happens between characters).  The n-th edge is found by projecting
+        n periods ahead of the edge we are sitting on and landing on the
+        nearest CLK edge: skip to (target - half a period), then take one
+        edge.  The projection keeps the edge count exact for ANY clock
+        period -- "skip (n - 2) cycles, then take 2 edges" loses ~1 edge per
+        call when the period is a fraction of a sample (e.g. 3.333 samples
+        at 4.8 MHz / 16 MHz), and the deficit accumulates across the byte
+        (the parity sample then reads the last data bit).  Without a period
+        estimate, fall back to waiting each edge exactly.'''
         if n <= 0:
             return True
-        if self._samples_per_clock and n > 2:
-            # Skip (n - 2) cycles by samples, then take the last 2 edges
-            # exactly.  Undershooting by a cycle is harmless (the bit is
-            # stable for the full ETU), and the final two edge waits re-align
-            # us to a genuine CLK edge.
-            skip = int((n - 2) * self._samples_per_clock)
+        spc = self._samples_per_clock
+        if spc:
+            target = self.samplenum + n * spc
+            skip = int(target - 0.5 * spc - self.samplenum)
             if skip > 0:
                 self.wait({'skip': skip})
-            n = 2
-        for _ in range(n):
-            pins = self.wait({self.CLK_IDX: 'r'})
-            if pins is None:
-                self._eof = True
-                return False
+        else:
+            for _ in range(n - 1):
+                pins = self.wait({self.CLK_IDX: 'r'})
+                if pins is None:
+                    self._eof = True
+                    return False
+        pins = self.wait({self.CLK_IDX: 'r'})
+        if pins is None:
+            self._eof = True
+            return False
         return True
 
     def _read_byte_clk(self):
@@ -1257,6 +1273,16 @@ class Decoder(srd.Decoder):
         bs = self.clock_skip
         self.bits = [0]  # start bit (always low)
         prev_edges = 0
+        if self._clk_remeasure_pending:
+            # A PPS may also change the CLK frequency (see handle_pps).
+            # CLK runs for the whole frame here; the measurement consumes
+            # exactly 16 rising edges, accounted as the first edges of the
+            # frame so the bit loop stays edge-exact.
+            self._clk_remeasure_pending = False
+            self._measure_clock_period()
+            if not self._eof:
+                prev_edges = 16
+                self.bit_samples = self._compute_bit_samples()
         for i in range(9):
             # bit centres at (1.5 + i) ETU from the start fall
             total = int(round((1.5 + i) * bs))
@@ -2041,28 +2067,17 @@ class Decoder(srd.Decoder):
                 self.di = self.baud_rate.get(int(pps1 & 0x0F), 1)
                 self.clock_skip = max(int(self.fi // self.di), 1)
                 self.log("PPS accepted: FI", self.fi, "DI", self.di, "clock_skip", self.clock_skip)
-            # PPS changed the bit rate.  How we follow it depends on the reader:
-            #
-            #  - Native CLK-sync reader (_use_clk_sync): clock_skip is the ONLY
-            #    timing input -- the CLK period is unchanged by PPS, so the new
-            #    ETU is exactly clock_skip * samples_per_clock.  No DATA
-            #    re-measurement is needed (and none should happen: consuming a
-            #    burst here would silently drop the first post-PPS command).
-            #    Just refresh bit_samples for wait_data_falling / edge fallback.
-            #
-            #  - Edge-list reader (non-native modes): there is no usable CLK
-            #    reference, so re-measure the ETU from the live DATA line on
-            #    the next decode cycle; that burst is emitted flagged, not
-            #    silently consumed.
             # PPS changed the bit rate.  How we follow it depends on the mode:
             #
-            #  - Native CLK mode (real CLK channel): after an ACCEPTED PPS the
-            #    card and terminal switch to FI/DI CLK cycles per bit, and the
-            #    CLK period itself is unchanged.  So clock_skip = FI/DI is
-            #    exact -- no DATA re-measurement is needed (and none should
-            #    happen: consuming a burst here would silently drop the first
-            #    post-PPS command).  Just refresh bit_samples for
-            #    wait_data_falling / the edge-list fallback.
+            #  - Native CLK mode (real CLK channel): clock_skip = FI/DI is
+            #    protocol-defined, so the new ETU is clock_skip *
+            #    samples_per_clock -- no DATA re-measurement is needed (and
+            #    none should happen here: consuming a burst at this point
+            #    would silently drop the first post-PPS command).  But some
+            #    readers also change the CLK FREQUENCY at the speed switch
+            #    (Alcor reader: 4.0 -> 4.8 MHz with FI/DI 512/32), which
+            #    invalidates the samples-per-clock measured at the ATR; the
+            #    first post-PPS character re-measures it (see _read_byte_clk).
             #
             #  - sample_as_clock / detect modes: there is no usable CLK
             #    reference, so re-measure the ETU from the live DATA line on
@@ -2073,6 +2088,10 @@ class Decoder(srd.Decoder):
                 self._pps_speed_changed = False
                 # Re-hunt for the next start bit after the PPS response.
                 self._start_fall = None
+                # Some readers also change the CLK frequency at the switch
+                # (Alcor 4.0 -> 4.8 MHz with FI/DI 512/32); re-measure it in
+                # the first post-PPS character, where CLK is running.
+                self._clk_remeasure_pending = True
             else:
                 self._pps_speed_changed = True
                 self.bit_samples = None
