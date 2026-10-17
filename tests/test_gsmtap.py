@@ -752,5 +752,216 @@ class TestLineEventPayload(unittest.TestCase):
         self.assertEqual(self.pd.LINE_EVENT_FLAG_CLK_HZ, 0x01)
 
 
+class TestDecodeStep(unittest.TestCase):
+    """Byte-replay harness for the DATA-state gate chain in decode_step().
+
+    The rest of the suite exercises only pure functions and leaf methods;
+    these tests drive the real state machine with a scripted byte queue so
+    the CLA/INS acceptance rules are pinned on the framing path (gate
+    ordering, header read, one-byte re-frame, exchange assembly), not just
+    in the predicates.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.gs, cls.pd = _load_iso7816()
+
+    def _make(self, byte_seq):
+        inst = object.__new__(self.pd.Decoder)
+        inst.reset()
+        inst.samplenum = 0
+        inst._inverse_convention = False  # normally set by start()
+        inst._atr_parsed = True           # keep 0x3B on the DATA path
+        inst._primed = True               # skip the first-sample RST/VCC priming
+        inst._at_eof = lambda: False
+        inst.state = 'DATA'
+        inst.hasT0 = True
+        inst.hasT1 = False
+        inst.bit_samples = 100            # ETU known: skip _measure_etu()
+        inst._pps_speed_changed = False
+        inst._resync = False
+        inst.out_ann = 0
+        inst.emitted = []
+        inst.discarded = []
+        inst._bytes = collections.deque(byte_seq)
+
+        def pop_byte():
+            if inst._replay:
+                return inst._replay.popleft()
+            return inst._bytes.popleft() if inst._bytes else None
+
+        def peek_byte():
+            b = inst._replay[0] if inst._replay else (
+                inst._bytes[0] if inst._bytes else None)
+            inst.peeked_samplenum = inst.samplenum
+            return b
+
+        inst.read_byte = pop_byte
+        inst.read_first_byte = pop_byte
+        inst._consume_first = pop_byte
+        inst.peek_byte = peek_byte
+        # The re-align / PPS / ATR / annotation paths are not under test.
+        inst.resync_idle = lambda: None
+        inst.handle_pps = lambda: None
+        inst.handle_atr = lambda pins: None
+        inst.put = lambda *a, **k: None
+        inst.log = lambda *a, **k: None
+        inst._note_discard = lambda value, reason, idle=False: \
+            inst.discarded.append((value, reason, idle))
+        inst._note_pre_sw = lambda value, reason: \
+            inst.discarded.append((value, reason, True))
+        inst.emit_packet = lambda sub_type, payload, ss, es, flags=0: \
+            inst.emitted.append((bytes(payload), flags))
+        # The vectors never depend on sample positions; a benign wait()
+        # keeps an unrelated wait call from crashing the harness.
+        inst.wait = lambda cond=None: [1] * 8
+        return inst
+
+    def test_extended_channel_exchange_frames(self):
+        # 'CX' STATUS on channel 4 (v1.9.3): the whole exchange must be
+        # read and emitted clean.
+        inst = self._make(bytes.fromhex('c0f20000009000'))
+        self.assertTrue(inst.decode_step())
+        self.assertEqual(inst.emitted,
+                         [(bytes.fromhex('c0f20000009000'), 0)])
+        self.assertEqual(inst.discarded, [])
+
+    def test_ex_class_exchange_frames(self):
+        # 'EX' STATUS on channel 6 with SM (b6 = 1): same.
+        inst = self._make(bytes.fromhex('e2f20000009000'))
+        self.assertTrue(inst.decode_step())
+        self.assertEqual(inst.emitted,
+                         [(bytes.fromhex('e2f20000009000'), 0)])
+        self.assertEqual(inst.discarded, [])
+
+    def test_bit_dense_valid_cla_is_not_idle_noise(self):
+        # 0x5F was accepted by plausible_cla() all along but always
+        # discarded by the idle-noise gate before v1.9.3 (dead code): the
+        # framing path must consume it as a command byte.
+        inst = self._make(bytes.fromhex('5fa40004009000'))
+        self.assertTrue(inst.decode_step())
+        self.assertEqual(inst.emitted,
+                         [(bytes.fromhex('5fa40004009000'), 0)])
+        self.assertEqual(inst.discarded, [])
+
+    def test_text_byte_boundary_is_discarded_not_framed(self):
+        # xiaomi_mi_a1_coldboot regression byte: the menu-text 'a' (0x61)
+        # at a mis-framed boundary is a suspicious CLA (not a frame start
+        # and not idle noise) -- exactly one byte is consumed.
+        inst = self._make(bytes.fromhex('612000c000621e'))
+        self.assertTrue(inst.decode_step())
+        self.assertEqual(inst.emitted, [])
+        self.assertEqual(len(inst.discarded), 1)
+        self.assertEqual(inst.discarded[0][0], 0x61)
+        self.assertIn('suspicious CLA', inst.discarded[0][1])
+        self.assertEqual(bytes(inst._bytes), bytes.fromhex('2000c000621e'))
+
+    def test_invalid_ins_re_frame_recovers_command(self):
+        # A stray leading byte (0x1C) shifts the header; the invalid-INS
+        # window (INS 0x00) drops only that byte and re-frames the real
+        # command, which is emitted intact on the next step.
+        inst = self._make(bytes.fromhex('1c00a40004009000'))
+        self.assertTrue(inst.decode_step())
+        self.assertEqual(inst.emitted, [])
+        self.assertEqual(inst.discarded[0][0], 0x1c)
+        self.assertIn('invalid INS', inst.discarded[0][1])
+        self.assertEqual(list(inst._replay), [0x00, 0xA4, 0x00, 0x04])
+        self.assertTrue(inst.decode_step())
+        self.assertEqual(inst.emitted,
+                         [(bytes.fromhex('00a40004009000'), 0)])
+
+    def test_idle_noise_still_discarded(self):
+        # 0xFE (all-1s minus one bit) is not a valid class: unchanged
+        # idle-noise discard.
+        inst = self._make(bytes.fromhex('fea40004009000'))
+        self.assertTrue(inst.decode_step())
+        self.assertEqual(inst.emitted, [])
+        self.assertEqual(len(inst.discarded), 1)
+        self.assertEqual(inst.discarded[0][0], 0xfe)
+        self.assertIn('idle-line noise', inst.discarded[0][1])
+
+
+class TestAtrHuntDetect(unittest.TestCase):
+    """The ATR-hunt command-detect handoff in handle_atr(), driven by a
+    scripted byte queue (the hunt logic itself is not otherwise covered)."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.gs, cls.pd = _load_iso7816()
+
+    def _make(self, byte_seq):
+        inst = object.__new__(self.pd.Decoder)
+        inst.reset()
+        inst.samplenum = 0
+        inst.ss = 0
+        inst._inverse_convention = False  # normally set by start()
+        inst._samples_per_clock = 4.0     # skip _measure_clock_period()
+        inst.bit_samples = 100            # skip _compute_bit_samples()
+        inst.out_ann = 0
+        inst.hasT0 = False                # start() defaults; a handoff flips it
+        inst.hasT1 = False
+        inst._bytes = collections.deque(byte_seq)
+
+        def pop_byte():
+            if inst._replay:
+                return inst._replay.popleft()
+            return inst._bytes.popleft() if inst._bytes else None
+
+        def peek_byte():
+            b = inst._replay[0] if inst._replay else (
+                inst._bytes[0] if inst._bytes else None)
+            inst.peeked_samplenum = inst.samplenum
+            return b
+
+        inst.read_byte = pop_byte
+        inst.read_first_byte = pop_byte
+        inst._consume_first = pop_byte
+        inst.peek_byte = peek_byte
+        inst.put = lambda *a, **k: None
+        inst.log = lambda *a, **k: None
+        inst.wait = lambda cond=None: [1] * 8
+        return inst
+
+    def test_handoff_on_extended_channel_cla(self):
+        # 0xC4 (channel 8, no SM) + 0xA4 (SELECT): a command header, not a
+        # non-TS byte; it is replayed to the DATA state.
+        inst = self._make([0xC4, 0xA4])
+        inst.handle_atr(None)
+        self.assertEqual(inst.state, 'DATA')
+        self.assertEqual(list(inst._replay), [0xC4])
+        self.assertTrue(inst.hasT0)
+
+    def test_handoff_on_odd_ins_89(self):
+        # The TS 102 221 AUTHENTICATE '89' form (v1.9.3): the second byte
+        # only qualifies because ODD_INS accepts it.
+        inst = self._make([0xC4, 0x89])
+        inst.handle_atr(None)
+        self.assertEqual(inst.state, 'DATA')
+        self.assertEqual(list(inst._replay), [0xC4])
+
+    def test_no_handoff_on_basic_channel_cla(self):
+        # CLA 0x00 is excluded by design (pre-activation noise).
+        inst = self._make([0x00, 0xA4])
+        inst.handle_atr(None)
+        self.assertEqual(inst.state, 'ATR')
+        self.assertEqual(list(inst._replay), [])
+
+    def test_no_handoff_on_invalid_ins(self):
+        # 0x61 is not a valid INS: the pair stays on the hunt path.
+        inst = self._make([0xC4, 0x61])
+        inst.handle_atr(None)
+        self.assertEqual(inst.state, 'ATR')
+        self.assertEqual(list(inst._replay), [])
+
+    def test_eof_after_plausible_cla_is_clean(self):
+        # Capture ends right after a plausible CLA byte: the hunt must
+        # return cleanly.  It used to call plausible_ins(None) -> TypeError
+        # (seen only by decode()'s crash protection).
+        inst = self._make([0xC4])
+        inst.handle_atr(None)             # must not raise
+        self.assertEqual(inst.state, 'ATR')
+        self.assertEqual(list(inst._replay), [])
+
+
 if __name__ == '__main__':
     unittest.main()

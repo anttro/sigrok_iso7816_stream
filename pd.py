@@ -28,7 +28,7 @@ from .gsmtap_stream import (GsmtapStreamSender,
     GSMTAP_SIM_RST_EVENT, GSMTAP_SIM_VCC_EVENT,
     GSMTAP_FLAG_BAD_FCS)
 
-VERSION = '1.9.3'
+VERSION = '1.9.4'
 
 
 
@@ -1766,7 +1766,10 @@ class Decoder(srd.Decoder):
             # on noise like the 0x00 0x1E seen in the live test.
             if plausible_cla(byte) and byte != 0x00:
                 nxt = self.peek_byte()
-                if plausible_ins(nxt):
+                # nxt is None at end-of-capture: keep hunting (the read
+                # below returns None and the hunt ends cleanly) instead of
+                # calling plausible_ins(None), which raises TypeError.
+                if nxt is not None and plausible_ins(nxt):
                     self._replay.appendleft(byte)
                     self.hasT0 = True
                     self.hasT1 = False

@@ -333,6 +333,37 @@ Known limitation: no on-disk fixture reproduces the exact live failure (all
 real captures contain a 372 ATR), so end-to-end proof needs a re-captured
 `.sr` from the failing phone; the unit tests cover the loop-escape logic.
 
+### v1.9.4: decode_step/hunt unit coverage + hunt EOF guard
+
+The v1.9.3 review's residual risk -- the new acceptance classes were only
+proven by "no regression" on the example traces -- is closed with a
+byte-replay harness, and the new coverage surfaced one latent defect:
+
+- **`TestDecodeStep`** drives the real `decode_step()` DATA-state gate chain
+  with a scripted byte queue (`read_byte`/`peek_byte`/`_consume_first`
+  stubbed over `_replay` + the queue; the re-align/PPS/ATR/annotation sinks
+  stubbed; `reset()` provides the state).  Pinned: `'CX'`/`'EX'` exchanges
+  frame and emit clean; `0x5F` (always eaten by the idle-noise gate before
+  v1.9.3) frames as a command; the `0x61` menu-text boundary byte is a
+  suspicious CLA with exactly one byte consumed; the invalid-INS one-byte
+  re-frame recovers a shifted SELECT into the intended packet; `0xFE` still
+  takes the idle-noise path.
+- **`TestAtrHuntDetect`** drives `handle_atr()` the same way: `0xC4 0xA4`
+  and `0xC4 0x89` (the odd-INS acceptance) hand the header to DATA via
+  `_replay`; CLA `0x00` stays excluded; an invalid INS does not hand off.
+- **Bug found and fixed:** the hunt's command-detect called
+  `plausible_ins(nxt)` with no None check -- a capture ending right after a
+  plausible CLA byte made `peek_byte()` return None and raised TypeError
+  (previously seen only by `decode()`'s crash protection).
+  `test_eof_after_plausible_cla_is_clean` pins the clean end-of-capture
+  return.
+
+Validation: 95/95 unit tests; the new framing/hunt tests fail against
+v1.9.2 for the right reasons (the acceptance is missing) and the EOF test
+fails against v1.9.3 (the TypeError); full trace suite unchanged
+(`compare_baseline.sh` IDENTICAL, baseline regenerated for the version +
+test listing).  VERSION -> 1.9.4.
+
 ### v1.9.3: higher logical channels in the CLA gate + defined odd INS codes
 
 A trace with higher logical channels (4-19) or an odd-INS command could not
@@ -852,7 +883,7 @@ append the measured CLK frequency when known
 
 ### Versioning
 
-The decoder version is defined in `pd.py` as `VERSION = '1.9.3'`.
+The decoder version is defined in `pd.py` as `VERSION = '1.9.4'`.
 The version is printed to the log on decoder startup.
 
 ### Testing after decoder changes
