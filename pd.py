@@ -28,7 +28,7 @@ from .gsmtap_stream import (GsmtapStreamSender,
     GSMTAP_SIM_RST_EVENT, GSMTAP_SIM_VCC_EVENT,
     GSMTAP_FLAG_BAD_FCS)
 
-VERSION = '1.9.2'
+VERSION = '1.9.3'
 
 
 
@@ -120,37 +120,67 @@ def plausible_sw(sw1):
 
 
 def plausible_cla(cla):
-    '''Check if CLA byte is a structurally valid ISO 7816 class.
+    '''Check if CLA byte is a structurally valid ISO 7816-4 / UICC class.
 
-    Per ISO 7816-4, the CLA byte is laid out as:
+    Accepted:
 
-      b8 b7 b6 : interindustry / proprietary class
-      bits 4-3 : secure messaging indicator
-      bits 2-1 : logical channel number (0-3 for interindustry)
+      0x00-0x1F  first interindustry: logical channels 0-3 in b2b1,
+                 secure messaging in b4b3, chaining in b5
+                 [ISO 7816-4 §5.1.1 Table 2].
+      0x40-0x5F  further interindustry: logical channels 4-19 (b4..b1
+                 encode the channel number minus four), with the legacy
+                 chaining variants [Table 3; TS 102 221 Table 10.4a].
+      0x80/0x84/0xA0/0xB0  SIM/UICC classes (0xB0 has no pinned-spec
+                 basis; kept for backward compatibility).
+      0xC0-0xCF/0xE0-0xEF  the UICC extended classes 'CX'/'EX': logical
+                 channels 4-19 in b4..b1, secure messaging in b6
+                 [TS 102 221 Table 10.4a].
 
-    Interindustry CLA high nibble is 0x0/0x1/0x4/0x5 (i.e. CLA & 0xF0 in
-    (0x00, 0x10, 0x40, 0x50)); this covers 0x00 (basic), 0x01-0x03
-    (logical channels 1-3, e.g. the command that follows a MANAGE CHANNEL
-    that opened channel 1), 0x0C (secure messaging), chaining variants,
-    and the structural/SM classes 0x4x/0x5x.
+    Not accepted, deliberately:
 
-    b8 = 1 marks proprietary structural formats; only the classes actually
-    used by SIM/UICC CAT stacks (3GPP TS 102 221 / TS 51.011) are accepted.
+      0x20-0x3F  reserved for future use by ISO/IEC.
+      0x60-0x6F  extended channels 4-19 with secure messaging in b6
+                 ('6X'): the class overlaps printable ASCII ('a'-'o'),
+                 and stray menu-text bytes started bogus frames on the
+                 mis-framed phone traces (0x61 on xiaomi_mi_a1_coldboot).
+                 Extended channels without CLA-level SM ('4X') and the
+                 'CX'/'EX' classes are accepted instead.
+      0x70-0x7F  chaining + secure messaging (not used by UICC: b5=0).
+      0x81-0x8F/0xA1-0xAF  the '8X'/'AX' standard-channel variants
+                 (channels 0-3): no trace uses them, and the same
+                 precision trade-off applies (the FCP byte 0xA5 on
+                 xiaomi_mi_a1_coldboot).
+      0x90-0x9F, 0xD0-0xDF, 0xF0-0xFF  not SIM/UICC classes.
 
     Anything else means the decoder likely mis-framed the byte stream and
     should attempt to resync.'''
     if not (cla & 0x80):
         return (cla & 0xF0) in (0x00, 0x10, 0x40, 0x50)
-    return cla in (0x80, 0x84, 0xA0, 0xB0)
+    return (cla & 0xF0) in (0xC0, 0xE0) or cla in (0x80, 0x84, 0xA0, 0xB0)
+
+
+# Odd INS codes defined by the pinned specs, i.e. the alternate variants of
+# ISO 7816-4 Table 4 pairs (READ BINARY 'B1' carries the offset in a data
+# object, ENVELOPE 'C3', UPDATE RECORD 'DD', ...) plus TS 102 221
+# AUTHENTICATE '89' (chunked authentication data).  Odd values outside this
+# set stay rejected: no command uses them, and a mis-framed boundary often
+# lands on a data byte -- the text run "I M" (0x49 0x4D) started a bogus
+# frame on xiaomi_phone_sample when every odd INS was accepted.
+ODD_INS = frozenset((
+    0x0F, 0x21, 0x87, 0x89, 0xA1, 0xB1, 0xB3,
+    0xC3, 0xCB, 0xDB, 0xD1, 0xD7, 0xDD,
+))
 
 
 def plausible_ins(ins):
     '''Check if INS byte is a structurally valid T=0 instruction.
 
-    Per ISO 7816-4 §12.1.1 / TS 102 221:
+    Per ISO 7816-4 §5.1.2 / TS 102 221 §10.1.2:
       - 0x00 is reserved/invalid.
       - MSB nibble 0x6/0x9 collides with status words.
-      - LSB must be 0 (standard interindustry commands).
+      - Odd INS codes are accepted only as the defined alternate command
+        variants (Table 4 pairs such as READ BINARY 'B1'; TS 102 221
+        AUTHENTICATE '89').
 
     Used together with plausible_cla() to distinguish a real command header
     from noise while hunting for an ATR.'''
@@ -158,9 +188,21 @@ def plausible_ins(ins):
         return False
     if (ins & 0xF0) == 0x60 or (ins & 0xF0) == 0x90:
         return False
-    if (ins & 0x01) != 0:
+    if (ins & 0x01) != 0 and ins not in ODD_INS:
         return False
     return True
+
+
+def is_idle_noise_byte(first_byte):
+    '''Check if a byte looks like an idle-line artifact rather than a
+    command class byte.
+
+    Idle-line noise is an all-1s byte with a few dropped bits, so 6 or
+    more set bits.  A spec-valid CLA can be bit-dense as well (extended
+    logical channels: 0x5F, 0xCF, 0xEB-0xEF), so plausibility wins over
+    density: such a byte takes the normal CLA/header path instead of the
+    noise resync.'''
+    return bin(first_byte).count('1') >= 6 and not plausible_cla(first_byte)
 
 
 def validate_t0_apdu(packet):
@@ -217,15 +259,15 @@ def is_desynced(packet):
 # data region, followed by its P3 data bytes and an interior status word.
 # These constants bound detector precision (empirically tuned on all 10
 # example traces: 0 hits on clean traces, every Samsung/xiaomi family hit).
-# A swallowed header's CLA is a real command class byte: interindustry
-# classes including the logical-channel numbers 0x01-0x03.  The structural
-# 0x4x/0x5x forms that plausible_cla() tolerates for resync robustness are
-# excluded here -- no CAT traffic uses them, and accepting them makes payload
-# bytes false-hit (Alcor secured-packet payload: "40 70 70 61 15" + an
-# SW-like byte 21 later).
+# This CLA set is deliberately NARROWER than plausible_cla(): the CONCAT
+# scan runs across every payload byte, where the extended-channel classes
+# (0x40-0x5F, 0xC0-0xEF) false-hit -- the Alcor secured-packet payload
+# "40 70 70 61 15" + an SW-like byte 21 later.  The command classes that
+# really occur on these wires stay covered: interindustry 0x00-0x1F
+# (including logical channels 1-3) and the SIM/UICC classes
+# 0x80/0x84/0xA0/0xB0.
 EMBEDDED_CLA = frozenset(
-    cla for cla in range(256)
-    if plausible_cla(cla) and (cla & 0xF0) not in (0x40, 0x50))
+    list(range(0x00, 0x20)) + [0x80, 0x84, 0xA0, 0xB0])
 # Commands that actually occur on these cards' bus (T=0 + STK/CAT).
 EMBEDDED_INS = frozenset((
     0x12, 0x14, 0x20, 0x44, 0x70, 0x88,
@@ -2255,19 +2297,22 @@ class Decoder(srd.Decoder):
             elif (firstByte == 0x3b) and not self._atr_parsed: # Probably ATR (only if no ATR yet)
                 self.handle_atr(self.wait({'skip': 0}))
                 return True
-            elif bin(firstByte).count('1') >= 6:
-                # Idle-line noise: byte has 6+ bits set (all-1s with
-                # 0-2 bit errors).  Re-sync instead of mis-parsing as
-                # a T=0 header (which would pack idle noise into
-                # garbage APDUs).
+            elif is_idle_noise_byte(firstByte):
+                # Idle-line noise: an all-1s byte with a few dropped bits.
+                # Re-sync instead of mis-parsing as a T=0 header (which
+                # would pack idle noise into garbage APDUs).  Spec-valid
+                # high-density CLAs (0x5F/0xCF/0xEB-0xEF: extended logical
+                # channels) are not noise and fall through to the
+                # CLA/header path below.
                 self._note_discard(firstByte, 'idle-line noise (6+ bits set)', idle=True)
                 self._consume_first()
                 self._resync = True
                 return True
             elif not plausible_cla(firstByte):
-                # Non-standard CLA: byte is not a recognized ISO 7816
-                # class.  Likely mis-framed data — attempt to resync.
-                self._note_discard(firstByte, 'suspicious CLA (not ISO 7816-4)')
+                # CLA byte is not a recognized class (no ISO 7816-4 /
+                # TS 102 221 coding).  Likely mis-framed data — attempt
+                # to resync.
+                self._note_discard(firstByte, 'suspicious CLA (not a recognized class)')
                 self._consume_first()
                 self.log("Suspicious CLA 0x{:02x}, attempting resync".format(firstByte))
                 self._resync = True
@@ -2319,15 +2364,12 @@ class Decoder(srd.Decoder):
                               ["all-zero T=0 header (stuck low?)"]])
                     self._resync = True
                     return True
-                # T=0 header validation per ISO 7816-4 §12.1.1.
-                # Rejects noise headers that slip past the CLA filter.
-                #  - INS=0x00 is reserved/invalid.
-                #  - MSB nibble 0x6/0x9 conflicts with status words.
-                #  - LSB must be 0 (all standard interindustry commands).
-                if (bIns == 0x00
-                        or (bIns & 0xF0) == 0x60
-                        or (bIns & 0xF0) == 0x90
-                        or (bIns & 0x01) != 0):
+                # T=0 header validation per ISO 7816-4 §5.1.2: the same
+                # INS rule as plausible_ins() (0x00 and 0x6x/0x9x are
+                # invalid; odd codes only as the defined alternate
+                # variants).  A window that fails it is almost always
+                # shifted by one stray leading byte.
+                if not plausible_ins(bIns):
                     # Byte-slip re-frame: the whole 5-byte window is a valid
                     # size but the INS is unusable, so the window is
                     # probably shifted by one (a stray leading byte from the

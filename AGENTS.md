@@ -160,14 +160,29 @@ The edge-read path had two bugs:
 
 #### CLA validation note
 
-All example traces (`test_7`, `test_8`, `xiaomi`, `samsung`)
-contain only CLA `0x00` (interindustry) and `0x8x` (USIM/CAT, mostly `0x80`
-with occasional `0x81` for logical channel 1).
-The decoder must **not** mandate specific CLA values — other CLA values
-(e.g. `0x04`, `0x08`, `0x84`, `0xA0`, `0xB0`) are valid per ISO 7816-4 / 3GPP
-and must be accepted.  However, during test runs against the example traces,
-any CLA value outside `0x00-0x0F` and `0x80-0x8F` is an error flag indicating
-the decoder mis-framed the byte stream.
+`plausible_cla()` (v1.9.3) accepts the higher logical channels:
+
+- interindustry `0x00`-`0x1F` (channels 0-3 in b2b1) and `0x40`-`0x5F`
+  (`01xx xxxx`: channels 4-19 in b4..b1, no CLA-level SM; `0x50`-`0x5F`
+  are the legacy chaining variants);
+- the UICC extended classes `'CX'`/`'EX'` (`0xC0`-`0xCF`/`0xE0`-`0xEF`,
+  channels 4-19, SM in b6 -- TS 102 221 Table 10.4a);
+- `0x80`/`0x84`/`0xA0`/`0xB0` (0xB0 has no pinned-spec basis; kept for
+  backward compatibility).
+
+Rejected: `0x20`-`0x3F` (ISO-reserved); `0x60`-`0x6F`/`0x70`-`0x7F` (the
+SM-indicating extended classes -- `0x60`-`0x6F` overlaps printable ASCII
+and the text byte `0x61` started a bogus frame on xiaomi_mi_a1_coldboot
+when it was accepted); `0x81`-`0x8F`/`0xA1`-`0xAF` (the `'8X'`/`'AX'`
+standard-channel variants for channels 0-3 -- the FCP byte `0xA5` did the
+same); `0x90`-`0x9F`, `0xD0`-`0xDF`, `0xF0`-`0xFF`.  They are spec-coded
+but cost frame-start precision; add any of them back when a real trace
+requires it.
+During test runs such a CLA is an error flag indicating the decoder
+mis-framed the byte stream.  The example traces carry `0x00`
+(interindustry), `0x01` (logical channel 1 -- the SELECT-by-AID after
+MANAGE CHANNEL opens it) and `0x80` (USIM/CAT); no trace uses channels 2-3
+or the higher channels yet.
 
 #### ISO 7816 APDU validation (enforced from v1.1.7)
 
@@ -179,10 +194,18 @@ Validation is purely structural (no content scanning of command/response
 data), so the false-positive rate is very low.  The checks are:
 
 1. Length is at least 7 bytes (header + SW) and at most `MAX_TPDU_LEN` (271).
-2. CLA byte is in the recognized set (`0x00`, `0x04`, `0x08`, `0x80`,
-   `0x84`, `0xA0`, `0xB0`).
+2. CLA byte is a structurally valid ISO 7816-4 / UICC class — see
+   `plausible_cla()` (v1.9.3): `0x00`-`0x1F`, `0x40`-`0x5F` (logical
+   channels 4-19), `0xC0`-`0xCF`/`0xE0`-`0xEF` (`'CX'`/`'EX'`), plus
+   `0x80`/`0x84`/`0xA0`/`0xB0`.
 3. INS byte is plausible: not `0x00`, not in `0x6x`/`0x9x` (status-word
-   collision), and the least-significant bit is `0`.
+   collision).  Odd INS codes are accepted only as the defined alternate
+   variants (ISO 7816-4 Table 4 pairs: `'0F'`, `'21'`, `'87'`, `'A1'`,
+   `'B1'`, `'B3'`, `'C3'`, `'CB'`, `'D1'`, `'D7'`, `'DB'`, `'DD'`;
+   TS 102 221 AUTHENTICATE `'89'`).  Other odd values stay rejected: a
+   mis-framed boundary exposes data bytes, and the text run `49 4D`
+   ("IM") started a bogus frame on xiaomi_phone_sample when every odd INS
+   was accepted.
 4. The penultimate byte (SW1) is in `0x61`–`0x6F` or `0x90`–`0x9F`.
    `0x60` is explicitly invalid: it is the T=0 NULL procedure byte
    (ISO 7816-3 §10.3.3 Table 11 marks SW1 as `'6X'` **except `'60'`**;
@@ -308,6 +331,62 @@ S21p 399/375, target S21p_coldboot 369, all `RESULT: OK`, 0 CONCAT);
 Known limitation: no on-disk fixture reproduces the exact live failure (all
 real captures contain a 372 ATR), so end-to-end proof needs a re-captured
 `.sr` from the failing phone; the unit tests cover the loop-escape logic.
+
+### v1.9.3: higher logical channels in the CLA gate + defined odd INS codes
+
+A trace with higher logical channels (4-19) or an odd-INS command could not
+decode: the acceptance gates knew neither.  Both are now spec-derived, with
+the empirical precision of the mis-frame filter preserved.
+
+- **Higher logical channels (4-19).**  TS 102 221 §10.1.1 Table 10.4a codes
+  them `'01x0 xxxx'` (`0x40`-`0x4F` without SM, `0x60`-`0x6F` with SM in b6)
+  and `'11x0 xxxx'` (`0xC0`-`0xCF`/`0xE0`-`0xEF`, the `'CX'`/`'EX'`
+  classes) -- ISO 7816-4 §5.1.1 Table 3 is the same with b5 = chaining.
+  `plausible_cla()` now accepts the `'CX'`/`'EX'` classes alongside the
+  previous `0x40`-`0x5F`, so extended-channel commands (e.g. STATUS on
+  channel 4 = `0xC0`) and higher channels in the no-SM `'4X'` form decode.
+  Rejected after testing: `0x60`-`0x6F`/`0x70`-`0x7F` (the SM-indicating
+  interindustry classes) and the `'8X'`/`'AX'` channel variants
+  `0x81`-`0x8F`/`0xA1`-`0xAF`.  They are spec-coded, but they cost
+  frame-start precision on the mis-framed traces: `0x60`-`0x6F` overlaps
+  printable ASCII, and the menu-text byte `0x61` ('a') started a bogus
+  frame on xiaomi_mi_a1_coldboot whose P3 swallowed the following exchanges
+  (a CONCAT regression); the FCP byte `0xA5` did the same for `'AX'`.
+  Previously such stray bytes were discarded as "suspicious CLA" and the
+  decoder resynced; the wider classes turned them into headers.  Add the
+  classes back when a real trace needs them.
+- **Odd INS.**  The gates rejected every odd INS code, so TS 102 221
+  AUTHENTICATE `'89'` (chunked authentication data) and the ISO 7816-4
+  Table 4 alternate variants mis-framed.  `plausible_ins()` now accepts
+  exactly the 13 defined odd codes (`ODD_INS`: `0F 21 87 89 A1 B1 B3 C3
+  CB D1 D7 DB DD`) and still rejects the rest: accepting every odd value
+  let the text run `49 4D` ("IM") start a bogus frame on
+  xiaomi_phone_sample.  The header check calls the same `plausible_ins()`
+  now (the duplicate inline condition is gone) and the stale ISO `§12.1.1`
+  citation was corrected to `§5.1.2`.
+- **Idle-noise gate.**  The 6+ set-bits discard runs before the CLA check,
+  so it would swallow the legitimately bit-dense extended classes
+  (`0xCF`/`0xEB`-`0xEF`) and kept `0x5F` dead (`plausible_cla()` accepted
+  it, the gate always discarded it).  The gate is now
+  `is_idle_noise_byte()`: only bytes no spec allows are idle noise; valid
+  CLAs take the normal header path.
+- **CONCAT detector unchanged by design.**  `EMBEDDED_CLA` no longer
+  derives from `plausible_cla()`; it is pinned to the empirically tuned 36
+  values (`0x00`-`0x1F` + `0x80`/`0x84`/`0xA0`/`0xB0`) in both `pd.py` and
+  `tools/vs_reader.py`, with a membership-pin test -- the CONCAT scan runs
+  across payload bytes where the extended classes false-hit (the Alcor
+  `"40 70 70 61 15"` run).
+- **Tests.**  CLA accept/reject vectors (including the two regressing bytes
+  `0x61`/`0xA5` and the reserved ranges), extended-channel
+  `validate_t0_apdu`/`is_desynced` vectors, the odd-INS vectors, the
+  idle-noise vectors and the EMBEDDED_CLA pin (75 -> 82 tests);
+  `tools/vs_reader.py` mirrors the predicate, `ODD_INS` and the pinned set.
+
+Validation: all 10 traces identical to the v1.9.2 baseline (APDU counts,
+CHKSUM/CONCAT/BAD_FCS/suspicious-CLA counts, `RESULT: OK` everywhere);
+`compare_baseline.sh` reports IDENTICAL.  The xiaomi CONCAT regressions the
+wider sets produced were found by this loop and narrowed away before the
+baseline was regenerated (version + test listing only).  VERSION -> 1.9.3.
 
 ### v1.9.2: PPS CLK upshift + exact CLK-edge projection (new reader support)
 
@@ -503,8 +582,9 @@ the source**, not just gated.  All 10 traces report 0 CONCAT:
 | S21p_coldboot_new_cable_sim2 | 375 | 0 |
 
 1. **One-byte re-frame on invalid INS.**  When a 5-byte header window passes
-   `plausible_cla()` but the INS is unusable (`0x00`, `0x6x`/`0x9x`, or odd
-   LSB — ISO 7816-4 §12.1.1), the window is almost always shifted by one
+   `plausible_cla()` but the INS is unusable (`0x00`, `0x6x`/`0x9x`, or an
+   odd code outside the defined variants -- see the v1.9.3 note), the
+   window is almost always shifted by one
    stray leading byte (e.g. a leftover SW2 read after a PACKETEND).  The old
    code silently dropped all 5 bytes plus resync (`_resync = True`), and when
    `resync_idle()` gave up on a busy burst the next byte became a bogus CLA
@@ -668,37 +748,51 @@ window may be filtering real start bits.
 | 0x9E / 0x9F | Extended-length: next byte L = number of response data bytes, then SW |
 | SW1 (`0x61`–`0x6F` / `0x9X`) | Status word: exchange complete |
 
-##### CLA (Class) Byte — Interindustry Structure
+##### CLA (Class) Byte — Coding and Logical Channels
 
-```
-Bit:  8   7   6   5   4   3   2   1
-      b8  b7  b6  b5  SM  SM  ch  ch
-```
+Accepted (v1.9.3):
 
-- Bits 8–7: `00` or `01` for interindustry; `1x` reserved for proprietary
-- Bit 6: `0` for interindustry; `1` for proprietary structural formats
-- Bits 4–3: Secure Messaging indicator (`00` = no SM)
-- Bits 2–1: Logical channel (0–3 for interindustry)
+- `000x xxxx` (`0x00`-`0x1F`): first interindustry — SM in b4b3, chaining in
+  b5, logical channel **0–3** in b2b1.
+- `01xx xxxx`: further interindustry — logical channel **4–19**
+  (b4..b1 = channel − 4).  Accepted: `0x40`-`0x4F` plus the legacy
+  `0x50`-`0x5F` chaining variants (no CLA-level SM).
+- UICC extended classes `'CX'`/`'EX'` (`0xC0`-`0xCF`/`0xE0`-`0xEF`):
+  channels 4–19 in b4..b1, SM in b6.
+- Legacy `0x80`/`0x84`/`0xA0`/`0xB0`.
 
-Valid interindustry CLA digits: `0x`, `1x`, `4x`, `5x`.
+Rejected: `0x20`-`0x3F` (ISO-reserved); `0x60`-`0x6F`/`0x70`-`0x7F` (SM in
+b6 — `0x60`-`0x6F` overlaps printable ASCII, and text bytes started bogus
+frames on the mis-framed phone traces); the `'8X'`/`'AX'` standard-channel
+variants `0x81`-`0x8F`/`0xA1`-`0xAF` (channels 0–3; same trade-off);
+`0x90`-`0x9F`, `0xD0`-`0xDF`, `0xF0`-`0xFF`.
 
-Examples: `0x00` (standard), `0x0C` (secure messaging).
+Examples: `0x00` (standard), `0x01` (channel 1), `0x44` (channel 8),
+`0x4F` (channel 19), `0xC0` (STATUS on channel 4, `'CX'` class),
+`0x0C` (secure messaging).
 
 ##### INS (Instruction) Byte — Valid Ranges
 
-- Low nibble cannot be `X0` if high nibble is even
-- Low nibble cannot be `XF` under any circumstances
-- `0x6x` and `0x7x` ranges are invalid (reserved for SW1 / protocol bytes)
+- `0x00` is reserved/invalid.
+- `0x6x`/`0x9x` collide with status words and are invalid.
+- Odd INS codes are valid only as the defined alternate variants
+  (`0F` ERASE BINARY, `21` VERIFY, `87` GENERAL AUTHENTICATE,
+  `A1` SEARCH BINARY, `B1` READ BINARY, `B3` READ RECORD, `C3` ENVELOPE,
+  `CB` GET DATA, `D1` WRITE BINARY, `D7` UPDATE BINARY, `DB` PUT DATA,
+  `DD` UPDATE RECORD; TS 102 221 AUTHENTICATE `89`).
 
-Standard interindustry INS values: `A4` (SELECT), `B0` (READ BINARY),
-`D6` (UPDATE BINARY), `B2` (READ RECORD), `E2` (APPEND RECORD),
-`20` (VERIFY), `82` (EXTERNAL AUTHENTICATE), `88` (INTERNAL AUTHENTICATE).
+Common INS values: `A4` (SELECT), `B0`/`B1` (READ BINARY),
+`D6`/`D7` (UPDATE BINARY), `B2`/`B3` (READ RECORD), `E2` (APPEND RECORD),
+`20`/`21` (VERIFY), `82` (EXTERNAL AUTHENTICATE), `88`/`89` (AUTHENTICATE),
+`C2`/`C3` (ENVELOPE: CAT), `C0` (GET RESPONSE).
 
 ##### Quick Validation Checklist
 
-1. CLA high nibble is `0`, `1`, `4`, or `5` (for interindustry)
-2. INS low nibble is not `F`
-3. INS is outside `0x6x`–`0x7x` range
+1. CLA is a valid class: `0x00`–`0x1F`/`0x40`–`0x5F` (interindustry, channels
+   0–3/4–19) or `0xC0`–`0xCF`/`0xE0`–`0xEF` (UICC extended) or
+   `0x80`/`0x84`/`0xA0`/`0xB0`
+2. INS is not `0x00`
+3. INS is outside the `0x6x`/`0x9x` status-word ranges
 
 **Current smoke-test status:**
 
@@ -753,7 +847,7 @@ append the measured CLK frequency when known
 
 ### Versioning
 
-The decoder version is defined in `pd.py` as `VERSION = '1.9.2'`.
+The decoder version is defined in `pd.py` as `VERSION = '1.9.3'`.
 The version is printed to the log on decoder startup.
 
 ### Testing after decoder changes

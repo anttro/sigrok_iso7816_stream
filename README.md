@@ -221,8 +221,8 @@ filtered from stderr.
 - Desynced TPDUs (mis-framed exchanges) are kept but flagged with
   `GSMTAP_FLAG_BAD_FCS` in the GSMTAP header `res` byte — visible in
   Wireshark as a BAD-FCS warning.
-- A T=0 header with a structurally invalid INS (ISO 7816-4 §12.1.1:
-  `0x00`, `0x6x`/`0x9x`, or odd LSB) is almost always a one-byte shift from
+- A T=0 header with a structurally invalid INS (ISO 7816-4 §5.1.2:
+  `0x00` or `0x6x`/`0x9x`) is almost always a one-byte shift from
   a stray leading byte (e.g. a leftover SW2 read after a PACKETEND).
   Instead of silently dropping the whole 5-byte window (which let the next
   byte become a bogus CLA and swallow the remaining dialog into one CONCAT

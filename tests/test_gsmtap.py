@@ -98,6 +98,32 @@ class TestDesyncHelpers(unittest.TestCase):
         self.assertFalse(self.pd.is_desynced(
             b'\x00\xc0\x00\x00\x25\xc0\x62\x23\x90\x00'))
 
+    def test_is_desynced_extended_channel_valid(self):
+        # v1.9.3: higher logical channels and the UICC extended classes
+        # are clean traffic, not desync.  0x44 = SELECT on channel 8,
+        # 0x4F = SELECT on channel 19, 0xC0 = STATUS on channel 4
+        # ('CX'), 0xE2 = READ BINARY on channel 6 with SM ('EX').
+        for h in ('44a40004009000', '4fa40004009000',
+                  'c0f20000009000', 'e2b000000212349000'):
+            with self.subTest(h=h):
+                self.assertFalse(self.pd.is_desynced(bytes.fromhex(h)))
+
+    def test_idle_noise_byte(self):
+        # All-1s artifacts with dropped bits are idle noise (including
+        # 0x6F/0x7F/0xAF, which are not valid classes) ...
+        for b in (0x6f, 0x7f, 0xaf, 0xbf, 0xf7, 0xfc, 0xfd, 0xfe):
+            with self.subTest(b=b):
+                self.assertTrue(self.pd.is_idle_noise_byte(b))
+        # ... but spec-valid, bit-dense CLAs are command bytes: extended
+        # logical channels 0x5F/0xCF/0xEB-0xEF must not be swallowed by
+        # the noise resync.
+        for b in (0x5f, 0xcf, 0xeb, 0xee, 0xef):
+            with self.subTest(b=b):
+                self.assertFalse(self.pd.is_idle_noise_byte(b))
+        # A sparse invalid class is not "idle noise" either (it takes the
+        # suspicious-CLA path).
+        self.assertFalse(self.pd.is_idle_noise_byte(0x20))
+
     def test_is_desynced_null_sw1_is_invalid(self):
         # Regression (v1.9.1): the T=0 NULL byte 0x60 is not SW1.  The
         # wire "NULL 0x60 + real SW1 0x61" was mis-framed as the status
@@ -158,13 +184,38 @@ class TestValidateT0Apdu(unittest.TestCase):
         self._valid(b'\x00\xd6\x00\x00\x04\x11\x22\x33\x44\x90\x00')
 
     def test_valid_cla_interindustry_classes(self):
-        # Interindustry CLA digits 0x/1x/4x/5x are structurally valid
-        # (ISO 7816-4): includes logical channels 0x01-0x03, secure
-        # messaging 0x0C, chaining 0x10, and the SM/structural 0x4x/0x5x.
-        for cla in (0x01, 0x02, 0x03, 0x0C, 0x10, 0x14, 0x44, 0x50, 0x54):
+        # Interindustry CLA (ISO 7816-4 §5.1.1): 000x xxxx 0x00-0x1F
+        # (channels 0-3 in b2b1, SM 0x0C, chaining 0x10-0x1F) and
+        # 01xx xxxx 0x40-0x5F (channels 4-19 without CLA-level SM:
+        # b4..b1 = channel-4).  0x20-0x3F is reserved by ISO; the
+        # SM-indicating 0x60-0x6F/0x70-0x7F stay rejected -- see
+        # test_invalid_cla_untraced_variants.
+        for cla in (0x01, 0x02, 0x03, 0x0C, 0x10, 0x14,
+                    0x40, 0x44, 0x4F, 0x50, 0x54):
             pkt = bytes([cla, 0xa4, 0x00, 0x04, 0x00, 0x90, 0x00])
             with self.subTest(cla=cla):
                 self._valid(pkt)
+
+    def test_valid_cla_uicc_classes(self):
+        # UICC extended classes (TS 102 221 §10.1.1 Table 10.4a): 'CX'/'EX'
+        # (0xC0-0xCF/0xE0-0xEF) carry the extended channels 4-19 in b4..b1
+        # (SM in b6).  The legacy SIM/UICC values and 0xB0 (no pinned-spec
+        # basis, kept for compatibility) are unchanged.
+        for cla in (0x80, 0x84, 0xA0, 0xB0,
+                    0xC0, 0xC4, 0xCF, 0xE0, 0xE4, 0xEF):
+            pkt = bytes([cla, 0xa4, 0x00, 0x04, 0x00, 0x90, 0x00])
+            with self.subTest(cla=cla):
+                self._valid(pkt)
+
+    def test_valid_cla_extended_channel_exchanges(self):
+        # Real higher-channel shapes from TS 102 221 Tables 10.4a/10.5:
+        # SELECT on channel 8 ('4X'), SELECT on channel 19 ('4X'),
+        # STATUS on channel 4 ('CX'), READ BINARY on channel 6 with SM
+        # ('EX' -- the UICC extended class accepts b6 = SM).
+        self._valid(b'\x44\xa4\x00\x04\x00\x90\x00')
+        self._valid(b'\x4f\xa4\x00\x04\x00\x90\x00')
+        self._valid(b'\xc0\xf2\x00\x00\x00\x90\x00')
+        self._valid(b'\xe2\xb0\x00\x00\x02\x12\x34\x90\x00')
 
     def test_valid_cla_channel1_select_after_manage_channel(self):
         # The command that follows MANAGE CHANNEL (00 70 00 00 01) opening
@@ -174,9 +225,28 @@ class TestValidateT0Apdu(unittest.TestCase):
                     b'\xa0\x00\x00\x00\x63\x50\x4b\x43\x53\x2d\x31\x35'
                     b'\x6a\x82')
 
-    def test_invalid_cla_proprietary_unseen(self):
-        # 0xC0 is proprietary but not a class these cards emit; stays invalid
-        self._invalid(b'\xc0\xa4\x00\x04\x00\x90\x00', 'invalid CLA')
+    def test_invalid_cla_reserved_and_unseen(self):
+        # 0x20-0x3F (001x xxxx) is reserved by ISO 7816-4; 0x90-0x9F,
+        # 0xD0-0xDF and 0xF0-0xFF are not SIM/UICC classes ('11x0' needs
+        # b5 = 0).  All stay invalid.
+        for cla in (0x20, 0x2F, 0x3F, 0x90, 0x9F, 0xD0, 0xDF, 0xF0, 0xFE):
+            pkt = bytes([cla, 0xa4, 0x00, 0x04, 0x00, 0x90, 0x00])
+            with self.subTest(cla=cla):
+                self._invalid(pkt, 'invalid CLA')
+
+    def test_invalid_cla_untraced_variants(self):
+        # Accepted-set precision (v1.9.3): the higher-channel codings that
+        # cost frame-start precision stay rejected.  0x60-0x6F/0x70-0x7F
+        # are the SM-indicating extended classes -- 0x60-0x6F overlaps
+        # printable ASCII ('a'-'o'), and the text byte 0x61 started a bogus
+        # frame on xiaomi_mi_a1_coldboot; 0x81-0x8F/0xA1-0xAF are the
+        # '8X'/'AX' standard-channel variants (channels 0-3), where the
+        # FCP byte 0xA5 did the same.
+        for cla in (0x60, 0x61, 0x6F, 0x70, 0x73, 0x7F,
+                    0x81, 0x85, 0x8F, 0xA1, 0xA5, 0xAF):
+            pkt = bytes([cla, 0xa4, 0x00, 0x04, 0x00, 0x90, 0x00])
+            with self.subTest(cla=cla):
+                self._invalid(pkt, 'invalid CLA')
 
     def test_invalid_too_short(self):
         self._invalid(b'\x00\xa4\x00\x04\x00\x90', 'too short')
@@ -187,11 +257,31 @@ class TestValidateT0Apdu(unittest.TestCase):
     def test_invalid_ins_zero(self):
         self._invalid(b'\x00\x00\x00\x04\x00\x90\x00', 'invalid INS')
 
-    def test_invalid_ins_lsb_odd(self):
-        self._invalid(b'\x00\xa5\x00\x04\x00\x90\x00', 'invalid INS')
+    def test_valid_ins_odd_variants(self):
+        # Odd INS codes are accepted as the defined alternate variants:
+        # ISO 7816-4 Table 4 pairs (READ BINARY 'B1', ENVELOPE 'C3',
+        # UPDATE RECORD 'DD', ...) and TS 102 221 AUTHENTICATE '89'.
+        for ins in (0x0F, 0x21, 0x87, 0x89, 0xA1, 0xB1, 0xB3,
+                    0xC3, 0xCB, 0xD1, 0xD7, 0xDB, 0xDD):
+            pkt = bytes([0x00, ins, 0x00, 0x00, 0x00, 0x90, 0x00])
+            with self.subTest(ins=ins):
+                self._valid(pkt)
+
+    def test_invalid_ins_odd_undefined(self):
+        # Odd INS values with no defined command stay rejected: a
+        # mis-framed boundary exposes data bytes, and the text run
+        # "I M" (0x49 0x4D) started a bogus frame on xiaomi_phone_sample
+        # when every odd INS was accepted.
+        for ins in (0x03, 0x4D, 0x4F, 0xA5, 0xD3):
+            pkt = bytes([0x00, ins, 0x00, 0x00, 0x00, 0x90, 0x00])
+            with self.subTest(ins=ins):
+                self._invalid(pkt, 'invalid INS')
 
     def test_invalid_ins_sw_collision(self):
-        self._invalid(b'\x00\x64\x00\x04\x00\x90\x00', 'invalid INS')
+        for ins in (0x64, 0x9F):
+            pkt = bytes([0x00, ins, 0x00, 0x04, 0x00, 0x90, 0x00])
+            with self.subTest(ins=ins):
+                self._invalid(pkt, 'invalid INS')
 
     def test_invalid_sw1(self):
         self._invalid(b'\x00\xa4\x00\x04\x00\xff\x00', 'invalid SW1')
@@ -406,12 +496,23 @@ class TestEmbeddedExchanges(unittest.TestCase):
         # alcor_reader[46] (n=87): GET RESPONSE whose 80-byte payload holds a
         # secured-packet run "40 70 70 61 15" 21 bytes before an SW-like byte;
         # the reader follows with 00 c0 00 00 19 -- a clean single exchange.
-        # The structural 0x4x CLA must not turn payload bytes into a hit.
+        # The extended-channel 0x4x CLA must not turn payload bytes into a
+        # hit: the CONCAT detector is deliberately blind to those classes.
         h = ('80c2000050d14e82028381060291978b4440048111227ff64070706115'
              '3500350270000030151601252500000018ed15e8476126aa9cacbbe8f4'
              '735f962016e3c6e30a26af20c02bad2a34bdf49f152e263bc7390a6119')
         self.assertTrue(self.pd.validate_t0_apdu(bytes.fromhex(h))[0])
         self.assertEqual(self._hits(h), [])
+
+    def test_embedded_cla_membership_pinned(self):
+        # CONCAT precision (v1.9.3): the detector's CLA set is deliberately
+        # NARROWER than plausible_cla() -- it must not follow the widened
+        # acceptance into the extended-channel classes (0x40-0x7F,
+        # 0xC0-0xEF) that false-hit on payload bytes (the Alcor vector
+        # above).  Pin the exact membership.
+        expected = frozenset(list(range(0x00, 0x20)) +
+                             [0x80, 0x84, 0xA0, 0xB0])
+        self.assertEqual(self.pd.EMBEDDED_CLA, expected)
 
     def test_a55_u1_concat(self):
         # A55[296] (n=70): phantom-00 (buffer {01}) CLA + slip prefix.

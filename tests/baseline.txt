@@ -1,7 +1,7 @@
-=== Baseline captured 2026-09-27T23:45:58+03:00 ===
+=== Baseline captured 2026-10-17T23:18:56+03:00 ===
 
 === test_8 ===
-('=== iso7816 decoder v1.9.2 ===',)
+('=== iso7816 decoder v1.9.3 ===',)
 ('etu recovered (samples):', 1237)
 iso7816-1: RST deasserted
 ('RST deasserted',)
@@ -36,7 +36,7 @@ Degradation metrics:
 RESULT: OK - capture fully explained (reader + CAT + valid retries)
 
 === test_7 ===
-('=== iso7816 decoder v1.9.2 ===',)
+('=== iso7816 decoder v1.9.3 ===',)
 ('etu recovered (samples):', 1236)
 iso7816-1: RST deasserted
 ('RST deasserted',)
@@ -77,7 +77,7 @@ Degradation metrics:
 RESULT: OK - capture fully explained (reader + CAT + valid retries)
 
 === xiaomi_phone_sample ===
-('=== iso7816 decoder v1.9.2 ===',)
+('=== iso7816 decoder v1.9.3 ===',)
 ('etu recovered (samples):', 53)
 (11674007, 'CHKSUM ERROR: ', 0, 'bits: ', [0, 0, 0, 1, 0, 0, 1, 1, 1, 1])
 iso7816-1: CHKSUM ERROR bits=[0, 0, 0, 1, 0, 0, 1, 1, 1, 1]
@@ -102,7 +102,7 @@ Degradation metrics:
 RESULT: OK - capture fully explained (reader + CAT + valid retries)
 
 === xiaomi_mi_a1_coldboot ===
-('=== iso7816 decoder v1.9.2 ===',)
+('=== iso7816 decoder v1.9.3 ===',)
 ('RST low at start: expecting cold-boot ATR',)
 iso7816-1: RST deasserted
 ('RST deasserted',)
@@ -129,7 +129,7 @@ Degradation metrics:
 RESULT: OK - capture fully explained (reader + CAT + valid retries)
 
 === 4gmodem_coldboot ===
-('=== iso7816 decoder v1.9.2 ===',)
+('=== iso7816 decoder v1.9.3 ===',)
 ('RST low at start: expecting cold-boot ATR',)
 iso7816-1: RST deasserted
 ('RST deasserted',)
@@ -156,7 +156,7 @@ Degradation metrics:
 RESULT: OK - capture fully explained (reader + CAT + valid retries)
 
 === alcor_reader_sample ===
-('=== iso7816 decoder v1.9.2 ===',)
+('=== iso7816 decoder v1.9.3 ===',)
 ('RST low at start: expecting cold-boot ATR',)
 iso7816-1: RST deasserted
 ('RST deasserted',)
@@ -189,7 +189,7 @@ Degradation metrics:
 RESULT: OK - capture fully explained (reader + CAT + valid retries)
 
 === samsung_A55_coldboot_new_cable ===
-('=== iso7816 decoder v1.9.2 ===',)
+('=== iso7816 decoder v1.9.3 ===',)
 ('RST low at start: expecting cold-boot ATR',)
 iso7816-1: RST deasserted
 ('RST deasserted',)
@@ -216,7 +216,7 @@ Degradation metrics:
 RESULT: OK - capture fully explained (reader + CAT + valid retries)
 
 === samsung_A55_coldboot_new_cable_sim2 ===
-('=== iso7816 decoder v1.9.2 ===',)
+('=== iso7816 decoder v1.9.3 ===',)
 ('RST low at start: expecting cold-boot ATR',)
 iso7816-1: RST deasserted
 ('RST deasserted',)
@@ -243,7 +243,7 @@ Degradation metrics:
 RESULT: OK - capture fully explained (reader + CAT + valid retries)
 
 === samsung_S21p_coldboot_new_cable ===
-('=== iso7816 decoder v1.9.2 ===',)
+('=== iso7816 decoder v1.9.3 ===',)
 ('RST low at start: expecting cold-boot ATR',)
 iso7816-1: RST deasserted
 ('RST deasserted',)
@@ -270,7 +270,7 @@ Degradation metrics:
 RESULT: OK - capture fully explained (reader + CAT + valid retries)
 
 === samsung_S21p_coldboot_new_cable_sim2 ===
-('=== iso7816 decoder v1.9.2 ===',)
+('=== iso7816 decoder v1.9.3 ===',)
 ('RST low at start: expecting cold-boot ATR',)
 iso7816-1: RST deasserted
 ('RST deasserted',)
@@ -354,9 +354,11 @@ test_glitch_low_pulse_removed (__main__.TestDeglitchEdges.test_glitch_low_pulse_
 test_no_edges (__main__.TestDeglitchEdges.test_no_edges) ... ok
 test_real_pulses_preserved (__main__.TestDeglitchEdges.test_real_pulses_preserved) ... ok
 test_short_pulse_start_edge_preserved (__main__.TestDeglitchEdges.test_short_pulse_start_edge_preserved) ... ok
+test_idle_noise_byte (__main__.TestDesyncHelpers.test_idle_noise_byte) ... ok
 test_is_desynced_all_zero_is_not_desync (__main__.TestDesyncHelpers.test_is_desynced_all_zero_is_not_desync) ... ok
 test_is_desynced_bad_sw (__main__.TestDesyncHelpers.test_is_desynced_bad_sw) ... ok
 test_is_desynced_clean_packets (__main__.TestDesyncHelpers.test_is_desynced_clean_packets) ... ok
+test_is_desynced_extended_channel_valid (__main__.TestDesyncHelpers.test_is_desynced_extended_channel_valid) ... ok
 test_is_desynced_null_sw1_is_invalid (__main__.TestDesyncHelpers.test_is_desynced_null_sw1_is_invalid) ... ok
 test_is_desynced_oversized (__main__.TestDesyncHelpers.test_is_desynced_oversized) ... ok
 test_is_desynced_short_fragment (__main__.TestDesyncHelpers.test_is_desynced_short_fragment) ... ok
@@ -374,6 +376,7 @@ test_clean_secured_packet_payload_alcor (__main__.TestEmbeddedExchanges.test_cle
 test_clean_select_611e (__main__.TestEmbeddedExchanges.test_clean_select_611e) ... ok
 test_clean_select_6a82 (__main__.TestEmbeddedExchanges.test_clean_select_6a82) ... ok
 test_concat_packets_are_not_is_desynced (__main__.TestEmbeddedExchanges.test_concat_packets_are_not_is_desynced) ... ok
+test_embedded_cla_membership_pinned (__main__.TestEmbeddedExchanges.test_embedded_cla_membership_pinned) ... ok
 test_samsung_record_burst_concat (__main__.TestEmbeddedExchanges.test_samsung_record_burst_concat) ... ok
 test_xiaomi_select_getresp_swallow (__main__.TestEmbeddedExchanges.test_xiaomi_select_getresp_swallow) ... ok
 test_eoferror_propagates (__main__.TestEndOfStream.test_eoferror_propagates) ... ok
@@ -400,8 +403,9 @@ test_repeated_same_sample_is_bounded_stall (__main__.TestStallCheck.test_repeate
 test_untracked_level_wait_never_stalls (__main__.TestStallCheck.test_untracked_level_wait_never_stalls) ... ok
 test_untracked_resets_stall_window (__main__.TestStallCheck.test_untracked_resets_stall_window) ... ok
 test_invalid_cla (__main__.TestValidateT0Apdu.test_invalid_cla) ... ok
-test_invalid_cla_proprietary_unseen (__main__.TestValidateT0Apdu.test_invalid_cla_proprietary_unseen) ... ok
-test_invalid_ins_lsb_odd (__main__.TestValidateT0Apdu.test_invalid_ins_lsb_odd) ... ok
+test_invalid_cla_reserved_and_unseen (__main__.TestValidateT0Apdu.test_invalid_cla_reserved_and_unseen) ... ok
+test_invalid_cla_untraced_variants (__main__.TestValidateT0Apdu.test_invalid_cla_untraced_variants) ... ok
+test_invalid_ins_odd_undefined (__main__.TestValidateT0Apdu.test_invalid_ins_odd_undefined) ... ok
 test_invalid_ins_sw_collision (__main__.TestValidateT0Apdu.test_invalid_ins_sw_collision) ... ok
 test_invalid_ins_zero (__main__.TestValidateT0Apdu.test_invalid_ins_zero) ... ok
 test_invalid_oversized (__main__.TestValidateT0Apdu.test_invalid_oversized) ... ok
@@ -411,10 +415,13 @@ test_valid_case1_direct_sw (__main__.TestValidateT0Apdu.test_valid_case1_direct_
 test_valid_case2_with_response (__main__.TestValidateT0Apdu.test_valid_case2_with_response) ... ok
 test_valid_case3_with_command_data (__main__.TestValidateT0Apdu.test_valid_case3_with_command_data) ... ok
 test_valid_cla_channel1_select_after_manage_channel (__main__.TestValidateT0Apdu.test_valid_cla_channel1_select_after_manage_channel) ... ok
+test_valid_cla_extended_channel_exchanges (__main__.TestValidateT0Apdu.test_valid_cla_extended_channel_exchanges) ... ok
 test_valid_cla_interindustry_classes (__main__.TestValidateT0Apdu.test_valid_cla_interindustry_classes) ... ok
+test_valid_cla_uicc_classes (__main__.TestValidateT0Apdu.test_valid_cla_uicc_classes) ... ok
 test_valid_direct_sw_with_p3_nonzero (__main__.TestValidateT0Apdu.test_valid_direct_sw_with_p3_nonzero) ... ok
+test_valid_ins_odd_variants (__main__.TestValidateT0Apdu.test_valid_ins_odd_variants) ... ok
 
 ----------------------------------------------------------------------
-Ran 75 tests in 0.024s
+Ran 82 tests in 0.023s
 
 OK

@@ -44,14 +44,18 @@ CAT_INS = {
 # GSMTAP_FLAG_BAD_FCS from gsmtap_stream.py
 GSMTAP_FLAG_BAD_FCS = 0x01
 
-# Valid CLA values for ISO 7816 / 3GPP.  Mirror of plausible_cla in pd.py:
-# interindustry structures (high nibble 0x0/0x1/0x4/0x5), which covers the
-# logical-channel classes 0x01-0x03 (e.g. the command after MANAGE CHANNEL
-# opens channel 1), plus the proprietary SIM/UICC CAT classes.
+# Valid CLA values for ISO 7816-4 / TS 102 221.  Mirror of plausible_cla in
+# pd.py: interindustry 0x00-0x1F (channels 0-3) and 0x40-0x5F (channels
+# 4-19 without CLA-level SM), the UICC extended classes 'CX'/'EX'
+# (0xC0-0xCF/0xE0-0xEF, channels 4-19), plus 0x80/0x84/0xA0/0xB0 (0xB0 has
+# no pinned-spec basis; kept for backward compatibility).  0x60-0x6F
+# ('6X': SM; overlaps printable ASCII 'a'-'o'), 0x70-0x7F and the '8X'/'AX'
+# standard-channel variants stay rejected: stray data bytes with those
+# classes started bogus frames on the mis-framed phone traces.
 def _plausible_cla(cla):
     if not (cla & 0x80):
         return (cla & 0xF0) in (0x00, 0x10, 0x40, 0x50)
-    return cla in (0x80, 0x84, 0xA0, 0xB0)
+    return (cla & 0xF0) in (0xC0, 0xE0) or cla in (0x80, 0x84, 0xA0, 0xB0)
 
 
 VALID_CLA = frozenset(cla for cla in range(256) if _plausible_cla(cla))
@@ -65,10 +69,12 @@ MAX_TPDU_LEN = 271
 # data region, followed by its P3 data bytes and an interior status word.
 # These constants bound detector precision (empirically tuned on all 10
 # example traces: 0 hits on clean traces, every Samsung/xiaomi family hit).
-# Mirror of pd.py: real command classes only -- the structural 0x4x/0x5x
-# forms that _plausible_cla() tolerates only add payload false hits.
+# Pinned in both pd.py and here -- deliberately narrower than VALID_CLA:
+# the extended-channel classes false-hit on payload bytes (the Alcor
+# "40 70 70 61 15" secured-packet run).  Only the command classes that
+# really occur on these wires stay covered.
 EMBEDDED_CLA = frozenset(
-    cla for cla in VALID_CLA if (cla & 0xF0) not in (0x40, 0x50))
+    list(range(0x00, 0x20)) + [0x80, 0x84, 0xA0, 0xB0])
 # Commands that actually occur on these cards' bus (T=0 + STK/CAT).
 EMBEDDED_INS = frozenset((
     0x12, 0x14, 0x20, 0x44, 0x70, 0x88,
@@ -134,12 +140,26 @@ def _plausible_sw(sw1):
     return (0x61 <= sw1 <= 0x6F) or (0x90 <= sw1 <= 0x9F)
 
 
+# Odd INS codes defined by the pinned specs: the alternate variants of the
+# ISO 7816-4 Table 4 pairs plus TS 102 221 AUTHENTICATE '89'.  Other odd
+# values stay rejected (no command uses them; mis-framed boundary data
+# bytes with odd INS started bogus frames on the phone traces).
+ODD_INS = frozenset((
+    0x0F, 0x21, 0x87, 0x89, 0xA1, 0xB1, 0xB3,
+    0xC3, 0xCB, 0xDB, 0xD1, 0xD7, 0xDD,
+))
+
+
 def _plausible_ins(ins):
+    # Mirror of plausible_ins in pd.py: 0x00 is invalid and 0x6x/0x9x
+    # collide with status words; odd INS values are accepted only as the
+    # defined alternate command variants (READ BINARY 'B1', AUTHENTICATE
+    # '89', ...).
     if ins == 0x00:
         return False
     if (ins & 0xF0) == 0x60 or (ins & 0xF0) == 0x90:
         return False
-    if (ins & 0x01) != 0:
+    if (ins & 0x01) != 0 and ins not in ODD_INS:
         return False
     return True
 
