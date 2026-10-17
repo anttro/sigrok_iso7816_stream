@@ -173,8 +173,9 @@ The edge-read path had two bugs:
 Rejected: `0x20`-`0x3F` (ISO-reserved); `0x60`-`0x6F`/`0x70`-`0x7F` (the
 SM-indicating extended classes -- `0x60`-`0x6F` overlaps printable ASCII
 and the text byte `0x61` started a bogus frame on xiaomi_mi_a1_coldboot
-when it was accepted); `0x81`-`0x8F`/`0xA1`-`0xAF` (the `'8X'`/`'AX'`
-standard-channel variants for channels 0-3 -- the FCP byte `0xA5` did the
+when it was accepted); `0x81`-`0x83`/`0x85`-`0x8F`/`0xA1`-`0xAF` (the
+`'8X'`/`'AX'` standard-channel variants for channels 0-3 other than the
+legacy `0x80`/`0x84`/`0xA0` -- the FCP byte `0xA5` did the
 same); `0x90`-`0x9F`, `0xD0`-`0xDF`, `0xF0`-`0xFF`.  They are spec-coded
 but cost frame-start precision; add any of them back when a real trace
 requires it.
@@ -347,7 +348,8 @@ the empirical precision of the mis-frame filter preserved.
   channel 4 = `0xC0`) and higher channels in the no-SM `'4X'` form decode.
   Rejected after testing: `0x60`-`0x6F`/`0x70`-`0x7F` (the SM-indicating
   interindustry classes) and the `'8X'`/`'AX'` channel variants
-  `0x81`-`0x8F`/`0xA1`-`0xAF`.  They are spec-coded, but they cost
+  `0x81`-`0x83`/`0x85`-`0x8F`/`0xA1`-`0xAF`.  They are spec-coded, but
+  they cost
   frame-start precision on the mis-framed traces: `0x60`-`0x6F` overlaps
   printable ASCII, and the menu-text byte `0x61` ('a') started a bogus
   frame on xiaomi_mi_a1_coldboot whose P3 swallowed the following exchanges
@@ -365,21 +367,23 @@ the empirical precision of the mis-frame filter preserved.
   now (the duplicate inline condition is gone) and the stale ISO `§12.1.1`
   citation was corrected to `§5.1.2`.
 - **Idle-noise gate.**  The 6+ set-bits discard runs before the CLA check,
-  so it would swallow the legitimately bit-dense extended classes
-  (`0xCF`/`0xEB`-`0xEF`) and kept `0x5F` dead (`plausible_cla()` accepted
+  so it would swallow the legitimately bit-dense classes (`0xCF`, `0xE7`,
+  `0xEB`, `0xED`-`0xEF`) and kept `0x5F` dead (`plausible_cla()` accepted
   it, the gate always discarded it).  The gate is now
   `is_idle_noise_byte()`: only bytes no spec allows are idle noise; valid
   CLAs take the normal header path.
 - **CONCAT detector unchanged by design.**  `EMBEDDED_CLA` no longer
   derives from `plausible_cla()`; it is pinned to the empirically tuned 36
   values (`0x00`-`0x1F` + `0x80`/`0x84`/`0xA0`/`0xB0`) in both `pd.py` and
-  `tools/vs_reader.py`, with a membership-pin test -- the CONCAT scan runs
+  `tools/vs_reader.py`, with a membership-pin test and a `pd.py` ↔
+  `vs_reader.py` mirror test -- the CONCAT scan runs
   across payload bytes where the extended classes false-hit (the Alcor
   `"40 70 70 61 15"` run).
 - **Tests.**  CLA accept/reject vectors (including the two regressing bytes
   `0x61`/`0xA5` and the reserved ranges), extended-channel
   `validate_t0_apdu`/`is_desynced` vectors, the odd-INS vectors, the
-  idle-noise vectors and the EMBEDDED_CLA pin (75 -> 82 tests);
+  idle-noise vectors, the EMBEDDED_CLA membership pin, the `ODD_INS` set
+  pin and the `pd.py` ↔ `vs_reader.py` mirror test (75 -> 84 tests);
   `tools/vs_reader.py` mirrors the predicate, `ODD_INS` and the pinned set.
 
 Validation: all 10 traces identical to the v1.9.2 baseline (APDU counts,
@@ -764,7 +768,8 @@ Accepted (v1.9.3):
 Rejected: `0x20`-`0x3F` (ISO-reserved); `0x60`-`0x6F`/`0x70`-`0x7F` (SM in
 b6 — `0x60`-`0x6F` overlaps printable ASCII, and text bytes started bogus
 frames on the mis-framed phone traces); the `'8X'`/`'AX'` standard-channel
-variants `0x81`-`0x8F`/`0xA1`-`0xAF` (channels 0–3; same trade-off);
+variants `0x81`-`0x83`/`0x85`-`0x8F`/`0xA1`-`0xAF` (channels 0–3; same
+trade-off);
 `0x90`-`0x9F`, `0xD0`-`0xDF`, `0xF0`-`0xFF`.
 
 Examples: `0x00` (standard), `0x01` (channel 1), `0x44` (channel 8),

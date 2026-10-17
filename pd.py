@@ -127,9 +127,11 @@ def plausible_cla(cla):
       0x00-0x1F  first interindustry: logical channels 0-3 in b2b1,
                  secure messaging in b4b3, chaining in b5
                  [ISO 7816-4 §5.1.1 Table 2].
-      0x40-0x5F  further interindustry: logical channels 4-19 (b4..b1
-                 encode the channel number minus four), with the legacy
-                 chaining variants [Table 3; TS 102 221 Table 10.4a].
+      0x40-0x4F  further interindustry: logical channels 4-19 (b4..b1
+                 encode the channel number minus four)
+                 [ISO Table 3; TS 102 221 Table 10.4a].
+      0x50-0x5F  the legacy command-chaining variants of 0x40-0x4F
+                 [ISO Table 3 only: TS 102 221 keeps b5 = 0].
       0x80/0x84/0xA0/0xB0  SIM/UICC classes (0xB0 has no pinned-spec
                  basis; kept for backward compatibility).
       0xC0-0xCF/0xE0-0xEF  the UICC extended classes 'CX'/'EX': logical
@@ -146,8 +148,9 @@ def plausible_cla(cla):
                  Extended channels without CLA-level SM ('4X') and the
                  'CX'/'EX' classes are accepted instead.
       0x70-0x7F  chaining + secure messaging (not used by UICC: b5=0).
-      0x81-0x8F/0xA1-0xAF  the '8X'/'AX' standard-channel variants
-                 (channels 0-3): no trace uses them, and the same
+      0x81-0x83/0x85-0x8F/0xA1-0xAF  the '8X'/'AX' standard-channel
+                 variants (channels 0-3) other than the legacy
+                 0x80/0x84/0xA0: no trace uses them, and the same
                  precision trade-off applies (the FCP byte 0xA5 on
                  xiaomi_mi_a1_coldboot).
       0x90-0x9F, 0xD0-0xDF, 0xF0-0xFF  not SIM/UICC classes.
@@ -198,10 +201,9 @@ def is_idle_noise_byte(first_byte):
     command class byte.
 
     Idle-line noise is an all-1s byte with a few dropped bits, so 6 or
-    more set bits.  A spec-valid CLA can be bit-dense as well (extended
-    logical channels: 0x5F, 0xCF, 0xEB-0xEF), so plausibility wins over
-    density: such a byte takes the normal CLA/header path instead of the
-    noise resync.'''
+    more set bits.  Valid CLAs can be bit-dense as well (0x5F, 0xCF,
+    0xE7, 0xEB, 0xED-0xEF), so plausibility wins over density: such a
+    byte takes the normal CLA/header path instead of the noise resync.'''
     return bin(first_byte).count('1') >= 6 and not plausible_cla(first_byte)
 
 
@@ -288,8 +290,9 @@ def embedded_exchanges(buf):
     embedded inside a packet's data region (index 5 onward).
 
     Pattern: header (CLA INS P1 P2 P3) + P3 data bytes + interior SW1/SW2
-    before the packet's own final status word.  CLA must be structurally
-    valid (same rule as plausible_cla); INS must be a real command byte;
+    before the packet's own final status word.  CLA must be one of the
+    pinned EMBEDDED_CLA classes (deliberately narrower than
+    plausible_cla()); INS must be a real command byte;
     SW1 is accepted within a small slack window after the nominal data end
     and must be interior (trailing bytes follow it).'''
     n = len(buf)
@@ -2300,10 +2303,10 @@ class Decoder(srd.Decoder):
             elif is_idle_noise_byte(firstByte):
                 # Idle-line noise: an all-1s byte with a few dropped bits.
                 # Re-sync instead of mis-parsing as a T=0 header (which
-                # would pack idle noise into garbage APDUs).  Spec-valid
-                # high-density CLAs (0x5F/0xCF/0xEB-0xEF: extended logical
-                # channels) are not noise and fall through to the
-                # CLA/header path below.
+                # would pack idle noise into garbage APDUs).  Valid
+                # bit-dense CLAs (0x5F/0xCF/0xE7/0xEB/0xED-0xEF:
+                # extended logical channels) are not noise and fall
+                # through to the CLA/header path below.
                 self._note_discard(firstByte, 'idle-line noise (6+ bits set)', idle=True)
                 self._consume_first()
                 self._resync = True

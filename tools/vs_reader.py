@@ -95,8 +95,9 @@ def embedded_exchanges(buf):
     embedded inside a packet's data region (index 5 onward).
 
     Pattern: header (CLA INS P1 P2 P3) + P3 data bytes + interior SW1/SW2
-    before the packet's own final status word.  CLA must be structurally
-    valid (same rule as _plausible_cla); INS must be a real command byte;
+    before the packet's own final status word.  CLA must be one of the
+    pinned EMBEDDED_CLA classes (deliberately narrower than
+    _plausible_cla()); INS must be a real command byte;
     SW1 is accepted within a small slack window after the nominal data end
     and must be interior (trailing bytes follow it).
     """

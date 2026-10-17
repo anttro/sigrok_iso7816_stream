@@ -1,4 +1,4 @@
-=== Baseline captured 2026-10-17T23:18:56+03:00 ===
+=== Baseline captured 2026-10-17T23:51:01+03:00 ===
 
 === test_8 ===
 ('=== iso7816 decoder v1.9.3 ===',)
@@ -411,6 +411,7 @@ test_invalid_ins_zero (__main__.TestValidateT0Apdu.test_invalid_ins_zero) ... ok
 test_invalid_oversized (__main__.TestValidateT0Apdu.test_invalid_oversized) ... ok
 test_invalid_sw1 (__main__.TestValidateT0Apdu.test_invalid_sw1) ... ok
 test_invalid_too_short (__main__.TestValidateT0Apdu.test_invalid_too_short) ... ok
+test_odd_ins_set_pinned (__main__.TestValidateT0Apdu.test_odd_ins_set_pinned) ... ok
 test_valid_case1_direct_sw (__main__.TestValidateT0Apdu.test_valid_case1_direct_sw) ... ok
 test_valid_case2_with_response (__main__.TestValidateT0Apdu.test_valid_case2_with_response) ... ok
 test_valid_case3_with_command_data (__main__.TestValidateT0Apdu.test_valid_case3_with_command_data) ... ok
@@ -420,8 +421,9 @@ test_valid_cla_interindustry_classes (__main__.TestValidateT0Apdu.test_valid_cla
 test_valid_cla_uicc_classes (__main__.TestValidateT0Apdu.test_valid_cla_uicc_classes) ... ok
 test_valid_direct_sw_with_p3_nonzero (__main__.TestValidateT0Apdu.test_valid_direct_sw_with_p3_nonzero) ... ok
 test_valid_ins_odd_variants (__main__.TestValidateT0Apdu.test_valid_ins_odd_variants) ... ok
+test_vs_reader_mirror (__main__.TestValidateT0Apdu.test_vs_reader_mirror) ... ok
 
 ----------------------------------------------------------------------
-Ran 82 tests in 0.023s
+Ran 84 tests in 0.025s
 
 OK

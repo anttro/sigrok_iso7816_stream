@@ -102,9 +102,9 @@ class TestDesyncHelpers(unittest.TestCase):
         # v1.9.3: higher logical channels and the UICC extended classes
         # are clean traffic, not desync.  0x44 = SELECT on channel 8,
         # 0x4F = SELECT on channel 19, 0xC0 = STATUS on channel 4
-        # ('CX'), 0xE2 = READ BINARY on channel 6 with SM ('EX').
+        # ('CX'), 0xE2 = STATUS on channel 6 with SM ('EX').
         for h in ('44a40004009000', '4fa40004009000',
-                  'c0f20000009000', 'e2b000000212349000'):
+                  'c0f20000009000', 'e2f20000009000'):
             with self.subTest(h=h):
                 self.assertFalse(self.pd.is_desynced(bytes.fromhex(h)))
 
@@ -114,10 +114,9 @@ class TestDesyncHelpers(unittest.TestCase):
         for b in (0x6f, 0x7f, 0xaf, 0xbf, 0xf7, 0xfc, 0xfd, 0xfe):
             with self.subTest(b=b):
                 self.assertTrue(self.pd.is_idle_noise_byte(b))
-        # ... but spec-valid, bit-dense CLAs are command bytes: extended
-        # logical channels 0x5F/0xCF/0xEB-0xEF must not be swallowed by
-        # the noise resync.
-        for b in (0x5f, 0xcf, 0xeb, 0xee, 0xef):
+        # ... but valid, bit-dense CLAs are command bytes: 0x5F/0xCF/
+        # 0xE7/0xEB/0xED-0xEF must not be swallowed by the noise resync.
+        for b in (0x5f, 0xcf, 0xe7, 0xeb, 0xed, 0xee, 0xef):
             with self.subTest(b=b):
                 self.assertFalse(self.pd.is_idle_noise_byte(b))
         # A sparse invalid class is not "idle noise" either (it takes the
@@ -210,12 +209,12 @@ class TestValidateT0Apdu(unittest.TestCase):
     def test_valid_cla_extended_channel_exchanges(self):
         # Real higher-channel shapes from TS 102 221 Tables 10.4a/10.5:
         # SELECT on channel 8 ('4X'), SELECT on channel 19 ('4X'),
-        # STATUS on channel 4 ('CX'), READ BINARY on channel 6 with SM
+        # STATUS on channel 4 ('CX'), STATUS on channel 6 with SM
         # ('EX' -- the UICC extended class accepts b6 = SM).
         self._valid(b'\x44\xa4\x00\x04\x00\x90\x00')
         self._valid(b'\x4f\xa4\x00\x04\x00\x90\x00')
         self._valid(b'\xc0\xf2\x00\x00\x00\x90\x00')
-        self._valid(b'\xe2\xb0\x00\x00\x02\x12\x34\x90\x00')
+        self._valid(b'\xe2\xf2\x00\x00\x00\x90\x00')
 
     def test_valid_cla_channel1_select_after_manage_channel(self):
         # The command that follows MANAGE CHANNEL (00 70 00 00 01) opening
@@ -239,14 +238,40 @@ class TestValidateT0Apdu(unittest.TestCase):
         # cost frame-start precision stay rejected.  0x60-0x6F/0x70-0x7F
         # are the SM-indicating extended classes -- 0x60-0x6F overlaps
         # printable ASCII ('a'-'o'), and the text byte 0x61 started a bogus
-        # frame on xiaomi_mi_a1_coldboot; 0x81-0x8F/0xA1-0xAF are the
-        # '8X'/'AX' standard-channel variants (channels 0-3), where the
-        # FCP byte 0xA5 did the same.
+        # frame on xiaomi_mi_a1_coldboot; 0x81-0x83/0x85-0x8F/0xA1-0xAF
+        # are the '8X'/'AX' standard-channel variants (channels 0-3) other
+        # than the legacy 0x80/0x84/0xA0, where the FCP byte 0xA5 did the
+        # same.
         for cla in (0x60, 0x61, 0x6F, 0x70, 0x73, 0x7F,
                     0x81, 0x85, 0x8F, 0xA1, 0xA5, 0xAF):
             pkt = bytes([cla, 0xa4, 0x00, 0x04, 0x00, 0x90, 0x00])
             with self.subTest(cla=cla):
                 self._invalid(pkt, 'invalid CLA')
+
+    def test_odd_ins_set_pinned(self):
+        # Exactly the odd codes the pinned specs define: the ISO 7816-4
+        # Table 4 pairs (0F ERASE BINARY, 21 VERIFY, 87 GENERAL
+        # AUTHENTICATE, A1 SEARCH BINARY, B1 READ BINARY, B3 READ RECORD,
+        # C3 ENVELOPE, CB GET DATA, D1 WRITE BINARY, D7 UPDATE BINARY,
+        # DB PUT DATA, DD UPDATE RECORD) plus TS 102 221 AUTHENTICATE 89.
+        self.assertEqual(self.pd.ODD_INS, frozenset((
+            0x0F, 0x21, 0x87, 0x89, 0xA1, 0xB1, 0xB3,
+            0xC3, 0xCB, 0xDB, 0xD1, 0xD7, 0xDD)))
+
+    def test_vs_reader_mirror(self):
+        # tools/vs_reader.py duplicates the acceptance predicates for its
+        # standalone pcap analysis; the copies must not drift from pd.py
+        # (a drift would make its "suspicious CLA" / validity metrics and
+        # the --pcap-only verdict disagree with the decoder).
+        path = os.path.join(REPO, 'tools', 'vs_reader.py')
+        spec = importlib.util.spec_from_file_location('vs_reader', path)
+        vs = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(vs)
+        self.assertEqual(
+            vs.VALID_CLA,
+            frozenset(c for c in range(256) if self.pd.plausible_cla(c)))
+        self.assertEqual(vs.ODD_INS, self.pd.ODD_INS)
+        self.assertEqual(vs.EMBEDDED_CLA, self.pd.EMBEDDED_CLA)
 
     def test_invalid_too_short(self):
         self._invalid(b'\x00\xa4\x00\x04\x00\x90', 'too short')
