@@ -45,6 +45,33 @@ jobs:
       - name: Build release archives
         run: ./tools/build_release.sh "$GITHUB_REF_NAME"
 
+      - name: Write the install notes
+        shell: bash
+        run: |
+          set -euo pipefail
+          version=$(sed -n "s/^VERSION = '\([0-9][0-9.]*\)'.*/\1/p" pd.py)
+          notes="$RUNNER_TEMP/release-notes.md"
+          cat > "$notes" <<'EOF'
+          Runtime release - the decoder, setup/start scripts, docs and README
+          images; no git history and no development files.
+
+          **Install - release package (recommended)**
+          - Linux: `sigrok_iso7816_stream-<VERSION>.tar.gz`
+          - Windows: `sigrok_iso7816_stream-<VERSION>.zip`
+
+          Extract the archive, then run `./setup.sh` + `./start.sh` (Linux) or
+          `setup.bat` + `start.bat` (Windows).  `SHA256SUMS` (attached) verifies
+          both downloads.  Requires sigrok-cli and the FX2 firmware; see the
+          README *Installation* section for the full prerequisites.
+
+          **Install - source checkout (development)**
+          `git clone https://github.com/anttro/sigrok_iso7816_stream.git`, then
+          the same setup/start scripts.  The clone adds `tests/`, the baseline
+          tools and the (local-only) example traces; the release package is the
+          runtime tree.
+          EOF
+          sed -i "s/<VERSION>/$version/g" "$notes"
+
       - name: Create or update the GitHub release
         shell: bash
         env:
@@ -52,12 +79,15 @@ jobs:
         run: |
           set -euo pipefail
           version=$(sed -n "s/^VERSION = '\([0-9][0-9.]*\)'.*/\1/p" pd.py)
+          notes="$RUNNER_TEMP/release-notes.md"
           # Upload into an existing release first.  If the release does not
           # exist yet, create it as a draft so the published release never
-          # appears with a partial asset set.
+          # appears with a partial asset set.  The install notes are prepended
+          # to GitHub's generated changelog.
           if ! gh release upload "$GITHUB_REF_NAME" dist/* --clobber; then
             gh release create "$GITHUB_REF_NAME" dist/* --draft \
-              --title "sigrok_iso7816_stream $version" --generate-notes
+              --title "sigrok_iso7816_stream $version" \
+              --notes-file "$notes" --generate-notes
           fi
           # Publish a new draft and re-publish an existing one.
           gh release edit "$GITHUB_REF_NAME" --draft=false

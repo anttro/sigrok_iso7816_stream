@@ -1050,11 +1050,14 @@ untouched, and `gh release upload dist/*` can never attach a stale version).
 (`tests/test_gsmtap.py`), tag == `pd.py` VERSION, the build script, then
 `gh release upload --clobber` (or `gh release create --draft` when there is
 no release yet) followed by `gh release edit --draft=false`, with
-`release-<tag>` concurrency.  **Release process:** commit the docs, workflow
-and scripts first, then tag `v1.9.7` and push the tag (with user approval) -
-the workflow must exist in the tagged commit, and the archive ships the
-committed READMEs.  Release notes are GitHub's auto-generated notes from the
-commits; `AGENTS.md` and `tests/` are not in the archive.  Packaging/docs
+`release-<tag>` concurrency.  The workflow prepends a standard install block
+to the generated notes: release package (recommended; Linux tar.gz / Windows
+zip, setup/start, SHA256SUMS) and source checkout (development).  **Release
+process:** commit the docs, workflow and scripts first, then tag `v1.9.7` and
+push the tag (with user approval) - the workflow must exist in the tagged
+commit, and the archive ships the committed READMEs.  The changelog itself is
+GitHub's auto-generated notes from the commits; `AGENTS.md` and `tests/` are
+not in the archive.  Packaging/docs
 only - no decoder behavior change, and `VERSION` is unchanged.
 
 ### Testing after decoder changes
