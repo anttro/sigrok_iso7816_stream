@@ -142,10 +142,10 @@ the reader log for all reader exchanges:
 
 Both traces show 0 garbage APDUs, 0 payload mismatches, and RESULT: OK.
 
-**Root cause:** `_edge_read` is initialized to `True` and never set to
-`False`, so the edge-read T=0 procedure loop (lines 1808–1895) always
-executes — the ATR-based procedure loop (lines 1898–1941) is dead code.
-The edge-read path had two bugs:
+**Root cause:** `_edge_read` was initialized to `True` and never set to
+`False`, so the edge-read T=0 procedure loop always executed and the
+ATR-based procedure loop was dead code.  **FIXED (v1.9.7):** the flag and
+the dead loop are removed.  The edge-read path had two bugs:
 
 1. **NULLs treated as command data (FIXED).**  The first post-header byte
    was checked for ACK; if it was NULL (0x60), it entered the case-3/4
@@ -332,6 +332,54 @@ S21p 399/375, target S21p_coldboot 369, all `RESULT: OK`, 0 CONCAT);
 Known limitation: no on-disk fixture reproduces the exact live failure (all
 real captures contain a 372 ATR), so end-to-end proof needs a re-captured
 `.sr` from the failing phone; the unit tests cover the loop-escape logic.
+
+### v1.9.7: spec fixes, T=1/parity, EOF guards, dead code + rate scaling
+
+The audit's P2 items:
+
+- **Odd INS set completed.**  `0x73` MANAGE SECURE CHANNEL and `0x75`
+  TRANSACT DATA (TS 102 221 Table 10.5) join `ODD_INS`; the mirrored set in
+  `tools/vs_reader.py` and the pinned test are updated.
+- **9E/9F are SW1.**  ISO 7816-3 §10.3.3 Table 11: every `9X` value is
+  SW1.  The fabricated "extended-length procedure byte" (it consumed the
+  next byte as a length, eating SW2 and losing the status word) is gone.
+  The second copy lived in the dead ATR-based loop removed below.
+- **T=1 blocks.**  `t1_parse_block()` EOF-guards every read (a truncated
+  block returns no half INF instead of raising) and bounds the M-bit chain
+  with `T1_CHAIN_MAX` instead of unbounded recursion.  The caller's
+  duplicate "chain follow-up" loop -- it read the *next* block after every
+  I-block, usually the peer's R-block, and merged the following I-block's
+  INF into the packet -- is gone.  R/S blocks emit nothing; the (possibly
+  chained) I-block INF is emitted as the APDU payload.  No T=1 trace
+  exists in the corpus, so this is unit-tested only.
+- **Parity flag.**  A packet containing a parity-error byte is now emitted
+  with `GSMTAP_FLAG_BAD_FCS` (the CHKSUM annotation alone was invisible to
+  downstream tooling), with a log note when the exchange is otherwise
+  clean.
+- **EOF guards.**  `handle_atr()` (TA/TB/TC/TD, historical bytes, TCK) and
+  `handle_pps()` (request and response fields, including the optional
+  PPS1-3) return cleanly on a truncated capture instead of raising on a
+  None byte; the T=1 block parser likewise.
+- **Dead code removed.**  `_edge_read` was initialized `True` and never
+  cleared, so the "ATR-based" T=0 procedure loop (58 lines) never ran and
+  the 1.5-ETU guard branch was unreachable.  The flag and both dead paths
+  are removed; the edge reader is the only T=0 framing reader (the
+  CLK-sync reader is selected by `_clock_skip_confident`).  The live loop
+  was dedented, not rewritten -- the trace metrics are unchanged.
+- **Samplerate scaling.**  `_samples_for_us()` replaces the hard-coded
+  16 MHz thresholds: the start-bit deglitch (`_min_pulse_samples`; `None`
+  = 2 samples @ 16 MHz), the `min_high` floor (0.25 us) and the ETU glitch
+  floor in `_etu_candidate` (0.75 us).  At 16 MHz the values are
+  unchanged; another capture rate now scales instead of breaking the
+  filters.
+
+Validation: 130/130 unit tests (13 new: 9E/9F SW1 for both values, the
+parity BAD_FCS flag, T=1 I/R/S blocks + M chain + two truncation cases
++ a one-block-per-step caller test + two PPS truncations, the truncated
+ATR TA, the samplerate/ETU-floor vectors); the 10-trace suite is
+unchanged from v1.9.6 (identical
+APDU/CHKSUM/CONCAT/BAD_FCS counts, `RESULT: OK` everywhere);
+`compare_baseline.sh` reports IDENTICAL.  VERSION -> 1.9.7.
 
 ### v1.9.6: ETU lock validation, hunt recovery, resync + ATR acceptance
 
@@ -838,13 +886,11 @@ The 2-sample advance in `wait_data_falling` shifts `_start_fall` by 2
 samples, but at Samsung's 16 CLK/ETU (~72 samples) this is negligible
 (<3% of a bit period) and does not affect downstream byte reading.
 
-**Design note: magic number.** `_min_pulse_samples = 2` is tuned for the
-primary 16 MHz sample rate (2 samples ≈ 125 ns, well within the FX2LP
-pull-up rise time of 200–500 ns).  At other sample rates the value would
-need adjustment — but since all current traces are 16 MHz, this is left
-as a hardcoded constant rather than a decoder option.  If 12 MHz or
-24 MHz traces are added later, consider making it configurable or
-scaling it from the sample rate.
+**Design note: pulse threshold.** `_min_pulse_samples` used to be a
+hard-coded 2 samples, tuned for the 16 MHz corpus (≈125 ns, within the
+FX2LP pull-up rise time of 200–500 ns).  Since v1.9.7 it is `None` by
+default and scales from `samplerate` (`_samples_for_us(0.125)` → 2 at
+16 MHz); a test or option may still override it (0 disables the check).
 
 **Logging.** Each rejected start-bit glitch is logged with a running
 count (`start-bit glitch rejected (#N)`) visible in the session log.
@@ -868,8 +914,7 @@ window may be filtering real start bits.
 | ACK (== INS or == ~INS) | Full data match: card acknowledges and expects all P3 data bytes |
 | INS^0x01 or ~INS^0x01 | Single-byte match: card validates syntax but processes data one byte at a time |
 | 0x60 | NULL: card busy, wait for next procedure byte (never an SW1) |
-| 0x9E / 0x9F | Extended-length: next byte L = number of response data bytes, then SW |
-| SW1 (`0x61`–`0x6F` / `0x9X`) | Status word: exchange complete |
+| SW1 (`0x61`–`0x6F` / `0x90`–`0x9F`) | Status word: exchange complete.  ISO 7816-3 §10.3.3 Table 11 has no exception for `9X`: `9E`/`9F` are SW1 too (the v1.9.7 fix) |
 
 ##### CLA (Class) Byte — Coding and Logical Channels
 
@@ -971,7 +1016,7 @@ append the measured CLK frequency when known
 
 ### Versioning
 
-The decoder version is defined in `pd.py` as `VERSION = '1.9.6'`.
+The decoder version is defined in `pd.py` as `VERSION = '1.9.7'`.
 The version is printed to the log on decoder startup.
 
 ### Testing after decoder changes
@@ -1166,7 +1211,8 @@ framing classifies the first post-header byte in this order (v1.9.5):
   the following exchanges could be merged silently).
 - **~INS** → byte-by-byte transfer: one data byte per ACK, read until SW.
 - Otherwise → case 3/4: the byte is terminal command data; read `P3`
-  command-data bytes, then the card's procedure byte (ACK/SW/`9E`/`9F`).
+  command-data bytes, then the card's procedure byte (ACK/SW; `9E`/`9F`
+  are SW1, not an extended length).
   On ACK, append any inline response data until SW (ISO 7816-3 §12.2 maps
   case 4 to a separate GET RESPONSE, so conforming cards send SW/61XY
   here; the append is a permissive extension).
@@ -1213,15 +1259,19 @@ discarded ideas.  "Proven" = kept in `pd.py`; "Rejected" = do not re-add.
   `clock_skip=369` before this fix).  Logs "RST low at start: expecting cold-boot
   ATR".  Decodes the full cold-boot ATR on `xiaomi_mi_a1_coldboot_sample.sr` /
   `4gmodem_coldboot_sample.sr` (0 GARBAGE).
-- **1.5-ETU start-bit guard.** Rejects the phantom `0x00` an idle glitch
-  inserts before an ATR.  Reliable.
+- **Half-ETU start-bit guard (edge reader).** Rejects the phantom `0x00`
+  an idle glitch inserts before an ATR while still accepting the ~1-ETU
+  inter-byte gap on fast ETUs (v1.9.7 removed the unreachable 1.5-ETU
+  CLK-sync branch).  Reliable.
 - **VCC/RST 10 ms level-stability hysteresis.** Reports a level only after
   ≥10 ms stable.  Reliable; symmetric power-up/down, kills spurious events
   from a ringing/floating sense line.
 - **PPS speed-switch follow (`clock_skip = F/D`).** After an accepted PPS the
   native skip becomes F/D CLK cycles/bit.  Reliable (verified live).
-- **T=1 block-chain follow-up bound.** Caps chained I-blocks so garbage
-  cannot loop forever.  Reliable.
+- **T=1 block decode (v1.9.7).** NAD/PCB/LEN/INF/LRC with the M-bit chain
+  followed inside `t1_parse_block()` (bounded by `T1_CHAIN_MAX`) and every
+  read EOF-guarded; R/S blocks carry no INF and are not emitted.  Unit
+  tested only (no T=1 capture in the corpus).  Reliable by construction.
 - **Hunt give-up (no synthetic ATR).** After `ATR_HUNT_FAIL_LIMIT` failed
   hunts the decoder resumes DATA without fabricating an ATR (v1.6.0 removed
   the old `[0x3B, 0x00]` fallback); the mid-session ETU estimator then
@@ -1235,7 +1285,8 @@ discarded ideas.  "Proven" = kept in `pd.py`; "Rejected" = do not re-add.
   v1.9.6); a rate that fails parity is invalidated and re-measured.
 - **Edge-list bit reader (`_read_byte_edges`).** Per-byte edge reconstruction
   from the DATA edge list (re-anchors the next byte via `_next_start_fall`).
-  Drift-immune.  Reliable for mid-session/edge mode; gated by `_edge_read`.
+  Drift-immune.  The T=0 framing reader; the CLK-sync reader is selected
+  when `_clock_skip_confident` is set (`_edge_read` removed in v1.9.7).
 - **`decode_step` unified dispatch.** One state machine handles
   ATR/PPS/DATA + mid-session.  Reliable; current architecture.
 - **`hasT0`/`hasT1` guards + init.** Prevents `AttributeError` and skips byte
@@ -1246,10 +1297,11 @@ discarded ideas.  "Proven" = kept in `pd.py`; "Rejected" = do not re-add.
   else command data (case 3/4).  Reliable for consolidating STK envelope
   commands.  P3-bounded reads avoid FCP tag misidentification (v1.1.1
   reverted read-until-SW from v1.1.0).
-- **1.5-ETU start-bit guard in `wait_data_falling`.** `min_high = 1.5 *
-  bit_samples` distinguishes genuine inter-byte idle gaps (≥2 ETU per ISO
-  7816-3) from intra-byte HIGH periods (≤1 ETU).  Prevents byte misalignment
-  after `_measure_etu()` consumption (v1.1.1 fix for post-ATR desync).
+- **Half-ETU start-bit guard in `wait_data_falling` (v1.9.7).** `min_high
+  = 0.5 * bit_samples` (with a rate-scaled floor) rejects intra-byte glitch
+  falls while accepting the ~1-ETU inter-byte gap; the next byte's start is
+  queued by the edge reader (`_next_start_fall`), so no 1.5-ETU guard is
+  needed on this path.
 - **Inverse-convention support (TS=0x3F, v1.9.6).**  The hunt already read
   `0x3F`; the DATA state now accepts it too, the start bit stays a falling
   edge from an idle-HIGH line (ISO 7816-3 7.1), and `get_bytes()` assembles
@@ -1288,11 +1340,11 @@ discarded ideas.  "Proven" = kept in `pd.py`; "Rejected" = do not re-add.
   `P3`) with P3-bounded reads for all paths (v1.1.1 reverted the
   read-until-SW experiment from v1.1.0 which mis-identified FCP `0x62` as
   SW1).
-- **0.5-ETU start-bit guard in `wait_data_falling` (for `_edge_read`).**
-  `min_high = 0.5 * bit_samples` was too small for slow ETUs — it accepted
-  intra-byte HIGH periods (data bit transitions) as start bits, causing byte
-  misalignment after `_measure_etu()` consumption.  Replaced by 1.5-ETU guard
-  in v1.1.1.
+- **0.5-ETU start-bit guard for the ATR-based CLK-sync loop.**  It was
+  rejected in v1.1.1 for that path (it accepted intra-byte HIGH periods on
+  slow ETUs).  The path was dead (`_edge_read` never False) and is removed
+  in v1.9.7; the surviving edge reader uses the 0.5 guard because its next
+  start bit is queued by `_next_start_fall` (no re-hunt mid-burst).
 
 ### Open residual limitations
 

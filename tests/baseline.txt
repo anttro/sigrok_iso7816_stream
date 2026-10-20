@@ -1,7 +1,7 @@
-=== Baseline captured 2026-10-20T17:56:26+03:00 ===
+=== Baseline captured 2026-10-20T18:55:32+03:00 ===
 
 === test_8 ===
-('=== iso7816 decoder v1.9.6 ===',)
+('=== iso7816 decoder v1.9.7 ===',)
 ('etu recovered (samples):', 1237)
 iso7816-1: RST deasserted
 ('RST deasserted',)
@@ -36,7 +36,7 @@ Degradation metrics:
 RESULT: OK - capture fully explained (reader + CAT + valid retries)
 
 === test_7 ===
-('=== iso7816 decoder v1.9.6 ===',)
+('=== iso7816 decoder v1.9.7 ===',)
 ('etu recovered (samples):', 1236)
 iso7816-1: RST deasserted
 ('RST deasserted',)
@@ -77,7 +77,7 @@ Degradation metrics:
 RESULT: OK - capture fully explained (reader + CAT + valid retries)
 
 === xiaomi_phone_sample ===
-('=== iso7816 decoder v1.9.6 ===',)
+('=== iso7816 decoder v1.9.7 ===',)
 ('etu recovered (samples):', 53)
 (11674007, 'CHKSUM ERROR: ', 0, 'bits: ', [0, 0, 0, 1, 0, 0, 1, 1, 1, 1])
 iso7816-1: CHKSUM ERROR bits=[0, 0, 0, 1, 0, 0, 1, 1, 1, 1]
@@ -102,7 +102,7 @@ Degradation metrics:
 RESULT: OK - capture fully explained (reader + CAT + valid retries)
 
 === xiaomi_mi_a1_coldboot ===
-('=== iso7816 decoder v1.9.6 ===',)
+('=== iso7816 decoder v1.9.7 ===',)
 ('RST low at start: expecting cold-boot ATR',)
 iso7816-1: RST deasserted
 ('RST deasserted',)
@@ -129,7 +129,7 @@ Degradation metrics:
 RESULT: OK - capture fully explained (reader + CAT + valid retries)
 
 === 4gmodem_coldboot ===
-('=== iso7816 decoder v1.9.6 ===',)
+('=== iso7816 decoder v1.9.7 ===',)
 ('RST low at start: expecting cold-boot ATR',)
 iso7816-1: RST deasserted
 ('RST deasserted',)
@@ -156,7 +156,7 @@ Degradation metrics:
 RESULT: OK - capture fully explained (reader + CAT + valid retries)
 
 === alcor_reader_sample ===
-('=== iso7816 decoder v1.9.6 ===',)
+('=== iso7816 decoder v1.9.7 ===',)
 ('RST low at start: expecting cold-boot ATR',)
 iso7816-1: RST deasserted
 ('RST deasserted',)
@@ -189,7 +189,7 @@ Degradation metrics:
 RESULT: OK - capture fully explained (reader + CAT + valid retries)
 
 === samsung_A55_coldboot_new_cable ===
-('=== iso7816 decoder v1.9.6 ===',)
+('=== iso7816 decoder v1.9.7 ===',)
 ('RST low at start: expecting cold-boot ATR',)
 iso7816-1: RST deasserted
 ('RST deasserted',)
@@ -216,7 +216,7 @@ Degradation metrics:
 RESULT: OK - capture fully explained (reader + CAT + valid retries)
 
 === samsung_A55_coldboot_new_cable_sim2 ===
-('=== iso7816 decoder v1.9.6 ===',)
+('=== iso7816 decoder v1.9.7 ===',)
 ('RST low at start: expecting cold-boot ATR',)
 iso7816-1: RST deasserted
 ('RST deasserted',)
@@ -243,7 +243,7 @@ Degradation metrics:
 RESULT: OK - capture fully explained (reader + CAT + valid retries)
 
 === samsung_S21p_coldboot_new_cable ===
-('=== iso7816 decoder v1.9.6 ===',)
+('=== iso7816 decoder v1.9.7 ===',)
 ('RST low at start: expecting cold-boot ATR',)
 iso7816-1: RST deasserted
 ('RST deasserted',)
@@ -270,7 +270,7 @@ Degradation metrics:
 RESULT: OK - capture fully explained (reader + CAT + valid retries)
 
 === samsung_S21p_coldboot_new_cable_sim2 ===
-('=== iso7816 decoder v1.9.6 ===',)
+('=== iso7816 decoder v1.9.7 ===',)
 ('RST low at start: expecting cold-boot ATR',)
 iso7816-1: RST deasserted
 ('RST deasserted',)
@@ -350,6 +350,7 @@ test_handoff_on_odd_ins_89 (__main__.TestAtrHuntDetect.test_handoff_on_odd_ins_8
 test_inverse_ts_pattern_is_parsed (__main__.TestAtrHuntDetect.test_inverse_ts_pattern_is_parsed) ... ok
 test_no_handoff_on_basic_channel_cla (__main__.TestAtrHuntDetect.test_no_handoff_on_basic_channel_cla) ... ok
 test_no_handoff_on_invalid_ins (__main__.TestAtrHuntDetect.test_no_handoff_on_invalid_ins) ... ok
+test_truncated_atr_ta_is_clean (__main__.TestAtrHuntDetect.test_truncated_atr_ta_is_clean) ... ok
 test_all_ff_idle_loop_is_bounded (__main__.TestAtrHuntEscape.test_all_ff_idle_loop_is_bounded) ... ok
 test_idle_ff_retries_before_cap (__main__.TestAtrHuntEscape.test_idle_ff_retries_before_cap) ... ok
 test_idle_resets_capped_then_resume (__main__.TestAtrHuntEscape.test_idle_resets_capped_then_resume) ... ok
@@ -360,6 +361,7 @@ test_recover_etu_in_hunt_runs_measurement (__main__.TestAtrHuntEscape.test_recov
 test_recovery_attempts_capped_then_hard_limit (__main__.TestAtrHuntEscape.test_recovery_attempts_capped_then_hard_limit) ... ok
 test_retry_then_recover_after_two_failures (__main__.TestAtrHuntEscape.test_retry_then_recover_after_two_failures) ... ok
 test_seeded_bit_samples_does_not_block_recovery (__main__.TestAtrHuntEscape.test_seeded_bit_samples_does_not_block_recovery) ... ok
+test_9e_9f_are_status_words (__main__.TestDecodeStep.test_9e_9f_are_status_words) ... ok
 test_bit_dense_valid_cla_is_not_idle_noise (__main__.TestDecodeStep.test_bit_dense_valid_cla_is_not_idle_noise) ... ok
 test_data_0x3b_before_traffic_is_atr_candidate (__main__.TestDecodeStep.test_data_0x3b_before_traffic_is_atr_candidate) ... ok
 test_data_0x3b_is_not_an_atr_after_traffic (__main__.TestDecodeStep.test_data_0x3b_is_not_an_atr_after_traffic) ... ok
@@ -371,6 +373,7 @@ test_immediate_sw_rejection_frames (__main__.TestDecodeStep.test_immediate_sw_re
 test_invalid_ins_re_frame_recovers_command (__main__.TestDecodeStep.test_invalid_ins_re_frame_recovers_command) ... ok
 test_inverse_ts_raw_pattern_is_an_atr_candidate (__main__.TestDecodeStep.test_inverse_ts_raw_pattern_is_an_atr_candidate) ... ok
 test_le_256_response_data_is_kept (__main__.TestDecodeStep.test_le_256_response_data_is_kept) ... ok
+test_parity_error_flags_bad_fcs (__main__.TestDecodeStep.test_parity_error_flags_bad_fcs) ... ok
 test_short_response_is_split_and_flagged (__main__.TestDecodeStep.test_short_response_is_split_and_flagged) ... ok
 test_short_response_replays_following_exchange (__main__.TestDecodeStep.test_short_response_replays_following_exchange) ... ok
 test_text_byte_boundary_is_discarded_not_framed (__main__.TestDecodeStep.test_text_byte_boundary_is_discarded_not_framed) ... ok
@@ -430,11 +433,21 @@ test_finds_fall_exactly_at_threshold (__main__.TestNextStartFall.test_finds_fall
 Regression test for Samsung 16 CLK/ETU concatenation. ... ok
 test_rejects_phantom_sub_etu_fall (__main__.TestNextStartFall.test_rejects_phantom_sub_etu_fall) ... ok
 test_returns_none_when_no_fall (__main__.TestNextStartFall.test_returns_none_when_no_fall) ... ok
+test_etu_glitch_floor_scales (__main__.TestSamplerateScaling.test_etu_glitch_floor_scales) ... ok
+test_samples_for_us (__main__.TestSamplerateScaling.test_samples_for_us) ... ok
 test_advancing_sample_is_not_stall (__main__.TestStallCheck.test_advancing_sample_is_not_stall) ... ok
 test_none_pins_is_eof (__main__.TestStallCheck.test_none_pins_is_eof) ... ok
 test_repeated_same_sample_is_bounded_stall (__main__.TestStallCheck.test_repeated_same_sample_is_bounded_stall) ... ok
 test_untracked_level_wait_never_stalls (__main__.TestStallCheck.test_untracked_level_wait_never_stalls) ... ok
 test_untracked_resets_stall_window (__main__.TestStallCheck.test_untracked_resets_stall_window) ... ok
+test_decode_step_reads_exactly_one_block (__main__.TestT1Blocks.test_decode_step_reads_exactly_one_block) ... ok
+test_handle_pps_truncated_is_clean (__main__.TestT1Blocks.test_handle_pps_truncated_is_clean) ... ok
+test_handle_pps_truncated_optional_is_clean (__main__.TestT1Blocks.test_handle_pps_truncated_optional_is_clean) ... ok
+test_i_block (__main__.TestT1Blocks.test_i_block) ... ok
+test_m_chain_concatenates_inf (__main__.TestT1Blocks.test_m_chain_concatenates_inf) ... ok
+test_r_and_s_blocks_have_no_inf (__main__.TestT1Blocks.test_r_and_s_blocks_have_no_inf) ... ok
+test_truncated_block_before_lrc_is_clean (__main__.TestT1Blocks.test_truncated_block_before_lrc_is_clean) ... ok
+test_truncated_inf_is_clean (__main__.TestT1Blocks.test_truncated_inf_is_clean) ... ok
 test_invalid_cla (__main__.TestValidateT0Apdu.test_invalid_cla) ... ok
 test_invalid_cla_reserved_and_unseen (__main__.TestValidateT0Apdu.test_invalid_cla_reserved_and_unseen) ... ok
 test_invalid_cla_untraced_variants (__main__.TestValidateT0Apdu.test_invalid_cla_untraced_variants) ... ok
@@ -457,6 +470,6 @@ test_valid_ins_odd_variants (__main__.TestValidateT0Apdu.test_valid_ins_odd_vari
 test_vs_reader_mirror (__main__.TestValidateT0Apdu.test_vs_reader_mirror) ... ok
 
 ----------------------------------------------------------------------
-Ran 117 tests in 0.026s
+Ran 130 tests in 0.029s
 
 OK

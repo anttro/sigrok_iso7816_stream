@@ -55,10 +55,13 @@ this decoder's `pcap_file=<path>` option).
 | RST tracking (optional) | `rst_detect=true`: emits reset assert/deassert events (sub_type 0x10) |
 | VCC tracking (optional) | `vcc_detect=true`: emits power on/off events (sub_type 0x11) |
 | Direct PCAP file | `pcap_file=<path>` writes PCAP without shell redirection |
-| Start-bit deglitch | 2-sample deglitch in the start-bit detector eliminates sub-ETU LOW glitches from FX2LP pull-up artifacts, preventing byte misalignment on fast phone traces |
+| Start-bit deglitch | Deglitch in the start-bit detector (2 samples at 16 MHz, scaled from the sample rate since v1.9.7) eliminates sub-ETU LOW glitches from FX2LP pull-up artifacts, preventing byte misalignment on fast phone traces |
 | Mid-session ETU lock | The DATA-edge ETU estimator rejects guard-only (all-zero) and single-spacing bursts and invalidates a rate that fails parity, so a capture at a non-default F/D locks safely |
 | ATR / resync guards | A DATA-state `0x3B`/`0x3F` is an ATR candidate only before the first APDU; parity-dirty or bare (TS+T0) frames are ignored, and `resync_idle` really waits for the idle level |
 | Inverse convention | TS=0x3F ATRs follow ISO 7816-3 7.1: inverted data, msb first, start bit still LOW from an idle-HIGH line |
+| T=1 blocks | NAD/PCB/LEN/INF/LRC decode with M-bit chaining; the I-block INF is emitted as the APDU, R/S blocks are not; a truncated capture ends cleanly |
+| Parity flag | A packet containing a parity-error byte is emitted with the GSMTAP BAD_FCS flag (not just an annotation) |
+| Rate-aware thresholds | Start-bit deglitch, guard floors and the ETU glitch floor scale from the capture sample rate instead of assuming 16 MHz |
 
 ## Decoder options
 
@@ -158,7 +161,8 @@ shift the whole ATR parse off-by-one). The decoder now:
 - never lets a decode exception kill the capture — errors are logged,
   annotated, and the state machine resyncs (end-of-stream still exits
   cleanly);
-- bounds T=1 block-chain follow-up so garbage cannot loop forever.
+- decodes T=1 blocks (NAD/PCB/LEN/INF/LRC) and bounds the M-bit chain so garbage
+  cannot loop forever.
 
 After an accepted PPS the decoder **follows the speed switch**: in
 native CLK mode `clock_skip` becomes F/D CLK cycles per bit (e.g.
@@ -170,7 +174,7 @@ answer with a fresh ATR at the default 372 cycles/bit. The decoder
 **re-arms the ATR hunt on RST deassert**: state back to `FIND START`,
 native skip reset to 372, hunt count cleared — so the re-ATR parses as
 an ATR instead of being mis-read as TPDU traffic at the PPS-negotiated
-rate. A **1.5-ETU start-bit guard** additionally rejects the phantom
+rate. A **half-ETU start-bit guard** (edge reader) additionally rejects the phantom
 `0x00` an idle glitch can insert before that ATR. Requires
 `rst_detect=true` (the `rst` channel assigned); without it a mid-session
 reset is still mis-read.
@@ -186,7 +190,7 @@ mis-read as a "premature abort", but there was never a device fault.
 Most of the early "noise" seen in captures (parity errors, mis-framed
 garbage, a bouncing VCC line) was a badly-decoded state machine, not the
 hardware: re-seating the tap did nothing, while the decoder rewrite fixed
-it completely (warm-reset re-arm, 1.5-ETU start-bit guard, 10 ms VCC
+it completely (warm-reset re-arm, half-ETU start-bit guard, 10 ms VCC
 debounce, T=0 exchange reassembly). A clean capture now decodes to zero
 garbage — see the `vs_reader.py` validation below.
 

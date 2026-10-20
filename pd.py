@@ -28,7 +28,7 @@ from .gsmtap_stream import (GsmtapStreamSender,
     GSMTAP_SIM_RST_EVENT, GSMTAP_SIM_VCC_EVENT,
     GSMTAP_FLAG_BAD_FCS)
 
-VERSION = '1.9.6'
+VERSION = '1.9.7'
 
 
 
@@ -170,7 +170,7 @@ def plausible_cla(cla):
 # lands on a data byte -- the text run "I M" (0x49 0x4D) started a bogus
 # frame on xiaomi_phone_sample when every odd INS was accepted.
 ODD_INS = frozenset((
-    0x0F, 0x21, 0x87, 0x89, 0xA1, 0xB1, 0xB3,
+    0x0F, 0x21, 0x73, 0x75, 0x87, 0x89, 0xA1, 0xB1, 0xB3,
     0xC3, 0xCB, 0xDB, 0xD1, 0xD7, 0xDD,
 ))
 
@@ -382,6 +382,7 @@ MAX_RESYNC_ATTEMPTS = 1024  # bail out if no idle gap found in that many tries
 # idle 0xFF forever at the wrong rate and can never reach the DATA state,
 # where the live ETU is measured -- a deadlock.  These cap the retries.
 ATR_HUNT_ETU_ATTEMPTS = 3   # live-ETU recovery attempts before resuming DATA
+T1_CHAIN_MAX = 32           # T=1 I-block M-bit chain depth bound
 ATR_HUNT_IDLE_RESETS = 3    # all-0xFF hunt resets before resuming DATA
 ATR_HUNT_FAIL_LIMIT = 12    # total failed hunt rounds before resuming DATA
 
@@ -569,7 +570,6 @@ class Decoder(srd.Decoder):
         # uses bit_samples) is the safe fallback.
         self._clock_skip_confident = False
         self._start_fall = None
-        self._edge_read = True
         self._last_sn = -1
         # Bounded allowance for steps that consume only queued bytes
         # (_replay / peeked_byte) and therefore do not advance the sample
@@ -577,7 +577,7 @@ class Decoder(srd.Decoder):
         # would mistake a re-frame step for end-of-capture.
         self._no_advance = 0
         self._eof = False
-        self._min_pulse_samples = 2  # tuned for 16 MHz sample rate
+        self._min_pulse_samples = None  # None = scale with samplerate (2 @ 16 MHz)
         self._glitch_rejects = 0
         self._prev_wait_sn = None
         self._stall = 0
@@ -797,6 +797,18 @@ class Decoder(srd.Decoder):
         if (not self.vcc_min_gap) or (now - cand_sn) >= self.vcc_min_gap:
             return (cand, cand_sn, cand, lvl, now)
         return (None, 0, confirmed, lvl, now)
+
+    def _samples_for_us(self, us):
+        '''Return the sample count for a duration in microseconds, scaled
+        to the capture samplerate.
+
+        The glitch/pulse thresholds used to be hard-coded for 16 MHz
+        (`_min_pulse_samples = 2`, `min_high = 4`, `MIN_ETU = 12`); at
+        another rate those become far too large or too small.  The examples
+        are 16 MHz, which is also the fallback when the framework has not
+        reported a rate (unit tests, older sigrok-cli).'''
+        sr = getattr(self, 'samplerate', None) or 16000000
+        return max(1, int(round(float(sr) * us / 1000000.0)))
 
     def _clk_hz(self):
         '''Return the measured CLK frequency in Hz, or None when unknown.
@@ -1066,7 +1078,9 @@ class Decoder(srd.Decoder):
         has a smaller spacing somewhere, so the guard pattern is
         distinguishable when every non-minimum spacing is at least 2x the
         minimum.'''
-        MIN_ETU = 12
+        # ~0.75 us: 12 samples at 16 MHz.  A real ETU is far longer, but a
+        # glitch can be shorter; scale with the capture rate.
+        MIN_ETU = self._samples_for_us(0.75)
         valid = [p for p in pairs if p[0] >= MIN_ETU]
         if len(valid) >= 2:
             med = sorted(p[0] for p in valid)[len(valid) // 2]
@@ -1148,7 +1162,6 @@ class Decoder(srd.Decoder):
         # (immune to the drift of fixed sample-skip timing) for every byte.
         # The CLK-sync reader is used once _derive_clock_skip_from_etu()
         # has a real measurement; a parity failure invalidates it.
-        self._edge_read = True
         if self._etu_measured:
             self.log("etu recovered (samples):", self.bit_samples)
 
@@ -1577,20 +1590,13 @@ class Decoder(srd.Decoder):
         The bit period is measured directly from the DATA line in SAMPLES
         (not by counting CLK edges), so a frozen CLK during Clock Stop Mode
         cannot desync the decoder.  A start bit is accepted only after DATA
-        has been HIGH for >= 1.5 bit periods (inter-character guard, rejects
-        intra-byte edges / idle glitches).'''
-        min_high = 4
+        has been HIGH for >= half an ETU: this rejects intra-byte glitch
+        falls yet still accepts the legitimate inter-byte gap (the ~1-etu
+        stop bit), which a 1.5-etu guard would wrongly reject on fast ETUs
+        (e.g. a phone SIM at ~53 samples/etu).'''
+        min_high = self._samples_for_us(0.25)
         if self.bit_samples:
-            if self._edge_read:
-                # DATA must be HIGH (idle) for at least half an etu before a
-                # fall is accepted as a start bit.  This rejects intra-byte
-                # glitch falls yet still accepts the legitimate inter-byte gap
-                # (the ~1-etu stop bit), which a 1.5-etu guard would wrongly
-                # reject on fast ETUs (e.g. a phone SIM at ~53 samples/etu),
-                # causing bytes to be skipped / 0x00 inserted.
-                min_high = max(int(0.5 * self.bit_samples), 4)
-            else:
-                min_high = max(int(1.5 * self.bit_samples), 4)
+            min_high = max(int(0.5 * self.bit_samples), min_high)
         while True:
             # Wait for DATA idle, servicing RST/VCC.
             # ISO 7816-3 7.1: the line idles HIGH and the start bit is
@@ -1630,8 +1636,11 @@ class Decoder(srd.Decoder):
                 break
             if (self.samplenum - hi_start) < min_high:
                 continue
-            if self._min_pulse_samples > 0:
-                pins = self.wait({'skip': self._min_pulse_samples})
+            pulse = self._min_pulse_samples
+            if pulse is None:
+                pulse = self._samples_for_us(0.125)  # 2 samples @ 16 MHz
+            if pulse > 0:
+                pins = self.wait({'skip': pulse})
                 if pins is not None:
                     bit = pins[self.DATA_IDX]
                     idle_val = 1  # line HIGH is idle in both conventions
@@ -1674,10 +1683,9 @@ class Decoder(srd.Decoder):
             self.peeked_byte = None
             self.peeked_samplenum = -1
             return byte;
-        # In edge-read (mid-session, gated-CLK) mode the next start bit is
-        # already queued by _read_byte_edges, so re-hunting would wrongly
-        # reject the short inter-byte gap.  Otherwise re-hunt normally.
-        if not (self._edge_read and self._start_fall is not None):
+        # The next start bit is already queued by _read_byte_edges, so
+        # re-hunting would wrongly reject the short inter-byte gap.
+        if self._start_fall is None:
             self.wait_data_falling()
         if self._eof:
             return None
@@ -1688,7 +1696,7 @@ class Decoder(srd.Decoder):
             return self._replay[0]
         if (self.peeked_byte != None):
             return self.peeked_byte
-        if not (self._edge_read and self._start_fall is not None):
+        if self._start_fall is None:
             self.wait_data_falling()
         if self._eof:
             return None
@@ -1967,18 +1975,26 @@ class Decoder(srd.Decoder):
                 return
             if (firstT0 & 0b00010000):
                 byte = self.read_byte()
+                if byte is None:
+                    return
                 tA.append(byte)
                 self.ATR.append(byte)
             if (firstT0 & 0b00100000):
                 byte = self.read_byte()
+                if byte is None:
+                    return
                 tB.append(byte)
                 self.ATR.append(byte)
             if (firstT0 & 0b01000000):
                 byte = self.read_byte()
+                if byte is None:
+                    return
                 tC.append(byte)
                 self.ATR.append(byte)
             if (firstT0 & 0b10000000):
                 byte = self.read_byte()
+                if byte is None:
+                    return
                 if ((byte & 0x0F) == 0):
                     self.hasT0 = True
                 elif ((byte & 0x0F) == 1):
@@ -1997,6 +2013,8 @@ class Decoder(srd.Decoder):
 
         for _ in range(0, t0 & 0x0F):
             byte = self.read_byte()
+            if byte is None:
+                return
             self.ATR.append(byte)
         
         if (self.hasT1 == False and self.hasT0 == False):
@@ -2004,6 +2022,8 @@ class Decoder(srd.Decoder):
 
         if (self.hasT1 == True or self.hasT15):
             byte = self.read_byte()
+            if byte is None:
+                return
             self.ATR.append(byte)
             xor = 0
             for i in range(1, len(self.ATR)): xor = xor ^ self.ATR[i]
@@ -2068,19 +2088,31 @@ class Decoder(srd.Decoder):
             self.hasT0 = False
             self.hasT1 = True
 
-    def t1_parse_block(self, es):
+    def t1_parse_block(self, es, depth=0):
+        '''Parse one T=1 block (NAD, PCB, LEN, INF, LRC) and return
+        (is_i_block, inf_bytes).
+
+        An I-block with the M bit set is followed by the chain of further
+        I-blocks in the same direction; their INF fields are concatenated
+        (the T=1 application APDU may span them).  Every read is
+        EOF-guarded -- a truncated capture returns no half block instead of
+        raising -- and the chain is bounded by T1_CHAIN_MAX so a garbage
+        M bit cannot recurse without limit.'''
         packet = []
-        lrc = 0;
         nad = self.read_byte()
-        lrc = lrc ^ nad
+        if nad is None:
+            return (False, packet)
+        lrc = nad
         self.put(es, self.samplenum, self.out_ann, [1, "NAD:" + hex(nad)])
         sad = nad & 0x70
         dad = nad & 0x07
         self.log("T=1 NAD=", hex(nad), "SAD=", hex(sad), "DAD=", hex(dad))
-        
+
         pcb = self.read_byte()
+        if pcb is None:
+            return (False, packet)
         lrc = lrc ^ pcb
-        
+
         isSBlock = False
         isRBlock = False
         isIBlock = False
@@ -2101,15 +2133,23 @@ class Decoder(srd.Decoder):
             self.log("PCB I-Block", hex(pcb))
 
         bLen = self.read_byte()
+        if bLen is None:
+            return (False, packet)
         lrc = lrc ^ bLen
         if (bLen > 0):
-            for _ in range(bLen): 
+            for _ in range(bLen):
                 byte = self.read_byte()
+                if byte is None:
+                    self.log("T=1 block truncated in INF at EOF")
+                    return (False, [])
                 lrc = lrc ^ byte
                 if (isIBlock): packet.append(byte)
-        
-        # CRC to implement
-        bLrc =  self.read_byte()
+
+        # CRC to implement (TC1 b0); LRC only for now.
+        bLrc = self.read_byte()
+        if bLrc is None:
+            self.log("T=1 block truncated before the LRC at EOF")
+            return (False, [])
         lrc = lrc ^ bLrc
 
         if (lrc != 0):
@@ -2125,17 +2165,14 @@ class Decoder(srd.Decoder):
         if (isSBlock):
             self.put(es, self.samplenum, self.out_ann, [8, ["S-Block", "S-Block flag={flag:02x}".format(flag=pcb & 0b00111111)]])
 
-        if (isIBlock and pcb & 0b00100000): # m-flag
+        if (isIBlock and pcb & 0b00100000 and depth < T1_CHAIN_MAX):
             self.log("T=1 Multiblock flag", hex(pcb))
-            for _ in range(32):  # bounded: garbage must not loop forever
-                isIBlock2,packet2 = self.t1_parse_block(self.samplenum)
-                if (isIBlock2):
-                    packet = packet + packet2
-                    break
-        
+            next_is_i, packet2 = self.t1_parse_block(self.samplenum, depth + 1)
+            if next_is_i:
+                packet = packet + packet2
 
-        return isIBlock,packet;
-    
+        return isIBlock, packet
+
     def handle_pps(self):
         # Mark PPS attempted so idle 0xFF bytes after a failed/no-PPS
         # scenario do not loop back into PPS detection indefinitely.
@@ -2143,8 +2180,12 @@ class Decoder(srd.Decoder):
         lrc = 0
         ss = self.peeked_samplenum
         pps = self.read_byte()
+        if pps is None:
+            return
         pps_req = [pps]
         pps0 = self.read_byte()
+        if pps0 is None:
+            return
         pps_req.append(pps0)
         # An idle I/O line idles HIGH (repeated 0xFF).  A genuine PPS0 always
         # has its reserved bits clear (bit7 and bits 0..3 == 0), so the value
@@ -2159,17 +2200,25 @@ class Decoder(srd.Decoder):
         pps1 = 0; pps2 = 0; pps3 = 0
         if (pps0 & 0b00010000):
             pps1 = self.read_byte()
+            if pps1 is None:
+                return
             pps_req.append(pps1)
             lrc = lrc ^ pps1
         if (pps0 & 0b00100000):
             pps2 = self.read_byte()
+            if pps2 is None:
+                return
             pps_req.append(pps2)
             lrc = lrc ^ pps2
         if (pps0 & 0b01000000):
             pps3 = self.read_byte()
+            if pps3 is None:
+                return
             pps_req.append(pps3)
             lrc = lrc ^ pps3
         pck = self.read_byte()
+        if pck is None:
+            return
         pps_req.append(pck)
         lrc = lrc ^ pps ^ pps0 ^ pck
         if (lrc != 0):
@@ -2182,26 +2231,38 @@ class Decoder(srd.Decoder):
 
         r_lrc = 0
         r_pps = self.read_byte()
+        if r_pps is None:
+            return
         pps_rsp = [r_pps]
         r_pps1 = 0; r_pps2 = 0; r_pps3 = 0
         if (r_pps != 0xFF):
             self.put(ss, self.samplenum, self.out_ann, [0, ["PPS Request not confirmed"]])
             self.log("PPS Request not confirmed", r_pps)
         r_pps0 = self.read_byte()
+        if r_pps0 is None:
+            return
         pps_rsp.append(r_pps0)
         if (r_pps0 & 0b00010000):
             r_pps1 = self.read_byte()
+            if r_pps1 is None:
+                return
             pps_rsp.append(r_pps1)
             r_lrc = r_lrc ^ r_pps1
         if (r_pps0 & 0b00100000):
             r_pps2 = self.read_byte()
+            if r_pps2 is None:
+                return
             pps_rsp.append(r_pps2)
             r_lrc = r_lrc ^ r_pps2
         if (r_pps0 & 0b01000000):
             r_pps3 = self.read_byte()
+            if r_pps3 is None:
+                return
             pps_rsp.append(r_pps3)
             r_lrc = r_lrc ^ r_pps3
         r_pck = self.read_byte()
+        if r_pck is None:
+            return
         pps_rsp.append(r_pck)
         r_lrc = r_lrc ^ r_pps ^ r_pps0 ^ r_pck
         if (r_lrc != 0):
@@ -2423,6 +2484,10 @@ class Decoder(srd.Decoder):
         elif self.state == 'DATA':
             packet = [];
             forced_bad = False
+            # A parity error on any byte of this exchange flags the emitted
+            # packet BAD_FCS (the annotation/log alone is not visible to
+            # downstream tooling).
+            parity_before = self._parity_errors
 
             # Mid-session capture with an explicit protocol: there is no ATR to
             # derive the bit period from, so recover it once from the live line
@@ -2585,284 +2650,210 @@ class Decoder(srd.Decoder):
                 # event.  Procedure bytes (ACK == INS, NULL 0x60, 9E/9F) are
                 # framing and omitted.
                 got_sw = False
-                if self._edge_read:
-                    # Mid-session (gated-CLK) path.
-                    #
-                    # T=0 case 3/4 commands carry Lc (= P3) command-data bytes
-                    # on the wire IMMEDIATELY after the 5-byte header, BEFORE
-                    # the card's first procedure byte.  The original loop (which
-                    # treats the first post-header byte as a procedure byte)
-                    # therefore mis-frames them.  We distinguish the cases by
-                    # the card's first procedure byte:
-                    #   * ACK (== INS or ~INS) right after the header  -> case 2/4, the
-                    #     terminal sent no command data and the card is
-                    #     acknowledging; read P3 response bytes (+SW), or, for
-                    #     Le == 0 (GET RESPONSE), read until the SW.
-                    #   * any other byte                        -> case 3/4, it
-                    #     is terminal command data; read P3 command-data bytes,
-                    #     then the card's procedure byte (ACK/SW/9x).
+                # Mid-session (gated-CLK) path.
+                #
+                # T=0 case 3/4 commands carry Lc (= P3) command-data bytes
+                # on the wire IMMEDIATELY after the 5-byte header, BEFORE
+                # the card's first procedure byte.  The original loop (which
+                # treats the first post-header byte as a procedure byte)
+                # therefore mis-frames them.  We distinguish the cases by
+                # the card's first procedure byte:
+                #   * ACK (== INS or ~INS) right after the header  -> case 2/4, the
+                #     terminal sent no command data and the card is
+                #     acknowledging; read P3 response bytes (+SW), or, for
+                #     Le == 0 (GET RESPONSE), read until the SW.
+                #   * any other byte                        -> case 3/4, it
+                #     is terminal command data; read P3 command-data bytes,
+                #     then the card's procedure byte (ACK/SW/9x).
+                pb0 = self.read_byte()
+                if pb0 is None:
+                    return True
+                # Skip NULL (0x60) procedure bytes and turnaround idle
+                # bytes (0xFF): the card may send NULLs while processing
+                # before the ACK, or the bus may idle at xFF during
+                # turnaround on the bidirectional DATA line.  Without
+                # this the NULLs / idle bytes are mis-identified as
+                # case-3/4 command data.
+                for _ in range(MAX_TPDU_LEN):
+                    if pb0 != 0x60 and pb0 != 0xFF:
+                        break
+                    self._note_discard(pb0,
+                                       'idle/NULL byte before procedure byte',
+                                       idle=True)
                     pb0 = self.read_byte()
                     if pb0 is None:
                         return True
-                    # Skip NULL (0x60) procedure bytes and turnaround idle
-                    # bytes (0xFF): the card may send NULLs while processing
-                    # before the ACK, or the bus may idle at xFF during
-                    # turnaround on the bidirectional DATA line.  Without
-                    # this the NULLs / idle bytes are mis-identified as
-                    # case-3/4 command data.
-                    for _ in range(MAX_TPDU_LEN):
-                        if pb0 != 0x60 and pb0 != 0xFF:
-                            break
-                        self._note_discard(pb0,
-                                           'idle/NULL byte before procedure byte',
-                                           idle=True)
-                        pb0 = self.read_byte()
-                        if pb0 is None:
-                            return True
-                    if plausible_sw(pb0):
-                        # Immediate status word: ISO 7816-3 §10.3.3 lets the
-                        # card finish the command at the first procedure
-                        # byte; a case-2 rejection ('6A82', '6CXX', ...)
-                        # carries no ACK and must not be read as data.
-                        sw2 = self.read_byte()
-                        if sw2 is None:
-                            return True
-                        packet.append(pb0)
-                        packet.append(sw2)
-                        got_sw = True
-                    elif pb0 == bIns:
-                        if (p3 == 0):
-                            # P3=0 in an outgoing command is Le=256
-                            # (ISO 7816-3 §10.3.2): the card ACKs and sends
-                            # response data until the status word.
-                            if self._t0_read_data_until_sw(packet):
-                                got_sw = True
-                        else:
-                            # ACK: read the P3 response bytes, then the SW.
-                            # The card may return FEWER bytes than Le
-                            # (6282 end-of-file; Lr <= Le, TS 102 221
-                            # §10.1.6): if the byte after the read is not
-                            # SW1, split the buffer at the first plausible
-                            # SW1 followed by a plausible CLA and replay the
-                            # tail (flagged BAD_FCS).
-                            resp = []
-                            eof = False
-                            for _ in range(p3):
-                                b = self.read_byte()
-                                if b is None:
-                                    eof = True
-                                    break
-                                resp.append(b)
-                            s1 = None if eof else self.read_byte()
+                if plausible_sw(pb0):
+                    # Immediate status word: ISO 7816-3 §10.3.3 lets the
+                    # card finish the command at the first procedure
+                    # byte; a case-2 rejection ('6A82', '6CXX', ...)
+                    # carries no ACK and must not be read as data.
+                    sw2 = self.read_byte()
+                    if sw2 is None:
+                        return True
+                    packet.append(pb0)
+                    packet.append(sw2)
+                    got_sw = True
+                elif pb0 == bIns:
+                    if (p3 == 0):
+                        # P3=0 in an outgoing command is Le=256
+                        # (ISO 7816-3 §10.3.2): the card ACKs and sends
+                        # response data until the status word.
+                        if self._t0_read_data_until_sw(packet):
+                            got_sw = True
+                    else:
+                        # ACK: read the P3 response bytes, then the SW.
+                        # The card may return FEWER bytes than Le
+                        # (6282 end-of-file; Lr <= Le, TS 102 221
+                        # §10.1.6): if the byte after the read is not
+                        # SW1, split the buffer at the first plausible
+                        # SW1 followed by a plausible CLA and replay the
+                        # tail (flagged BAD_FCS).
+                        resp = []
+                        eof = False
+                        for _ in range(p3):
+                            b = self.read_byte()
+                            if b is None:
+                                eof = True
+                                break
+                            resp.append(b)
+                        s1 = None if eof else self.read_byte()
+                        if s1 is None:
+                            eof = True
+                        while s1 in (0x60, 0xFF):
+                            s1 = self.read_byte()
                             if s1 is None:
                                 eof = True
-                            while s1 in (0x60, 0xFF):
-                                s1 = self.read_byte()
-                                if s1 is None:
-                                    eof = True
+                                break
+                        if s1 is not None and plausible_sw(s1):
+                            sw2 = self.read_byte()
+                            if sw2 is None:
+                                return True
+                            packet.extend(resp)
+                            packet.extend((s1, sw2))
+                            got_sw = True
+                        else:
+                            buf = resp + ([s1] if s1 is not None else [])
+                            split = None
+                            for j in range(len(buf) - 1):
+                                if not plausible_sw(buf[j]):
+                                    continue
+                                k = j + 2
+                                if k >= len(buf) or plausible_cla(buf[k]):
+                                    split = j
                                     break
-                            if s1 is not None and plausible_sw(s1):
+                            if split is not None:
+                                packet.extend(buf[:split])
+                                packet.extend(buf[split:split + 2])
+                                for t in reversed(buf[split + 2:]):
+                                    self._replay.appendleft(t)
+                                got_sw = True
+                                forced_bad = True
+                                self.log(
+                                    "SHORT RESPONSE: split %d data byte(s) "
+                                    "before SW1 0x%02x (Le %d)"
+                                    % (split, buf[split], p3))
+                            else:
+                                packet.extend(buf)
+                                forced_bad = True
+                                self._resync = True
+                                self.log(
+                                    "SHORT RESPONSE: no status word in "
+                                    "%d byte(s) read for Le %d"
+                                    % (len(buf), p3))
+                elif pb0 == (bIns ^ 0xFF):
+                    # ~INS ACK: one data byte at a time.  Read data
+                    # until the SW, consuming the procedure bytes in
+                    # between (ISO 7816-3 Table 11).
+                    if self._t0_read_response_data(packet, bIns):
+                        got_sw = True
+                else:
+                    # Case 3/4: the first post-header byte is command
+                    # data (P3 = Lc).
+                    packet.append(pb0)
+                    if (p3 == 0):
+                        # P3=0 and no procedure byte: treat the byte as
+                        # response data (Le=256, permissive) and read
+                        # until the status word.
+                        if self._t0_read_data_until_sw(packet):
+                            got_sw = True
+                    else:
+                        # Case 3/4: P3 command-data bytes, then
+                        # procedure byte.
+                        for _ in range(max(p3 - 1, 0)):
+                            b = self.read_byte()
+                            if b is None:
+                                return True
+                            packet.append(b)
+                        for _proc in range(32):
+                            pb = self.read_byte()
+                            if pb is None:
+                                return True
+                            if (pb == bIns or pb == (bIns ^ 0xFF)):
+                                # ACK: case-4 response data follows.
+                                # Append it until the status word (it
+                                # used to be discarded).  INS means all
+                                # remaining data; ~INS is per byte.
+                                if pb == bIns:
+                                    if self._t0_read_data_until_sw(packet):
+                                        got_sw = True
+                                elif self._t0_read_response_data(packet, bIns):
+                                    got_sw = True
+                                break
+                            elif (pb == (bIns ^ 0x01)
+                                    or pb == ((bIns ^ 0xFF) ^ 0x01)):
+                                # Single-byte match (INS^0x01 / ~INS^0x01):
+                                # read 1 byte, continue handshake.
+                                b = self.read_byte()
+                                if b is None:
+                                    return True
+                                packet.append(b)
+                                continue
+                            elif (pb == 0x60 or pb == 0xFF):
+                                # NULL (0x60): card busy.  Turnaround
+                                # idle (0xFF): bidirectional bus turnaround
+                                # between terminal command data and the
+                                # card's procedure byte.  Both: consume and
+                                # wait for next procedure byte.
+                                continue
+                            elif plausible_sw(pb):
+                                # SW1: case 3, no response data.
                                 sw2 = self.read_byte()
                                 if sw2 is None:
                                     return True
-                                packet.extend(resp)
-                                packet.extend((s1, sw2))
+                                packet.append(pb)
+                                packet.append(sw2)
                                 got_sw = True
+                                break
                             else:
-                                buf = resp + ([s1] if s1 is not None else [])
-                                split = None
-                                for j in range(len(buf) - 1):
-                                    if not plausible_sw(buf[j]):
-                                        continue
-                                    k = j + 2
-                                    if k >= len(buf) or plausible_cla(buf[k]):
-                                        split = j
-                                        break
-                                if split is not None:
-                                    packet.extend(buf[:split])
-                                    packet.extend(buf[split:split + 2])
-                                    for t in reversed(buf[split + 2:]):
-                                        self._replay.appendleft(t)
-                                    got_sw = True
-                                    forced_bad = True
-                                    self.log(
-                                        "SHORT RESPONSE: split %d data byte(s) "
-                                        "before SW1 0x%02x (Le %d)"
-                                        % (split, buf[split], p3))
-                                else:
-                                    packet.extend(buf)
-                                    forced_bad = True
-                                    self._resync = True
-                                    self.log(
-                                        "SHORT RESPONSE: no status word in "
-                                        "%d byte(s) read for Le %d"
-                                        % (len(buf), p3))
-                    elif pb0 == (bIns ^ 0xFF):
-                        # ~INS ACK: one data byte at a time.  Read data
-                        # until the SW, consuming the procedure bytes in
-                        # between (ISO 7816-3 Table 11).
-                        if self._t0_read_response_data(packet, bIns):
-                            got_sw = True
-                    else:
-                        # Case 3/4: the first post-header byte is command
-                        # data (P3 = Lc).
-                        packet.append(pb0)
-                        if (p3 == 0):
-                            # P3=0 and no procedure byte: treat the byte as
-                            # response data (Le=256, permissive) and read
-                            # until the status word.
-                            if self._t0_read_data_until_sw(packet):
-                                got_sw = True
-                        else:
-                            # Case 3/4: P3 command-data bytes, then
-                            # procedure byte.
-                            for _ in range(max(p3 - 1, 0)):
-                                b = self.read_byte()
-                                if b is None:
-                                    return True
-                                packet.append(b)
-                            for _proc in range(32):
-                                pb = self.read_byte()
-                                if pb is None:
-                                    return True
-                                if (pb == bIns or pb == (bIns ^ 0xFF)):
-                                    # ACK: case-4 response data follows.
-                                    # Append it until the status word (it
-                                    # used to be discarded).  INS means all
-                                    # remaining data; ~INS is per byte.
-                                    if pb == bIns:
-                                        if self._t0_read_data_until_sw(packet):
-                                            got_sw = True
-                                    elif self._t0_read_response_data(packet, bIns):
+                                # Unexpected byte: scan for SW,
+                                # skip non-SW bytes (e.g. 0xFF
+                                # turnaround artifacts).
+                                for _ in range(MAX_TPDU_LEN):
+                                    if plausible_sw(pb):
+                                        sw2 = self.read_byte()
+                                        if sw2 is None:
+                                            return True
+                                        packet.append(pb)
+                                        packet.append(sw2)
                                         got_sw = True
-                                    break
-                                elif (pb == (bIns ^ 0x01)
-                                        or pb == ((bIns ^ 0xFF) ^ 0x01)):
-                                    # Single-byte match (INS^0x01 / ~INS^0x01):
-                                    # read 1 byte, continue handshake.
-                                    b = self.read_byte()
-                                    if b is None:
+                                        break
+                                    self._note_pre_sw(pb,
+                                                      'non-SW byte during '
+                                                      'unexpected-byte scan')
+                                    pb = self.read_byte()
+                                    if pb is None:
                                         return True
-                                    packet.append(b)
-                                    continue
-                                elif (pb == 0x60 or pb == 0xFF):
-                                    # NULL (0x60): card busy.  Turnaround
-                                    # idle (0xFF): bidirectional bus turnaround
-                                    # between terminal command data and the
-                                    # card's procedure byte.  Both: consume and
-                                    # wait for next procedure byte.
-                                    continue
-                                elif (pb == 0x9e or pb == 0x9f):
-                                    # Extended-length procedure byte: L
-                                    # response data bytes follow, then SW.
-                                    L = self.read_byte()
-                                    if L is None:
-                                        return True
-                                    for _ in range(L):
-                                        b = self.read_byte()
-                                        if b is None:
-                                            return True
-                                        packet.append(b)
-                                    continue
-                                elif plausible_sw(pb):
-                                    # SW1: case 3, no response data.
-                                    sw2 = self.read_byte()
-                                    if sw2 is None:
-                                        return True
-                                    packet.append(pb)
-                                    packet.append(sw2)
-                                    got_sw = True
-                                    break
-                                else:
-                                    # Unexpected byte: scan for SW,
-                                    # skip non-SW bytes (e.g. 0xFF
-                                    # turnaround artifacts).
-                                    for _ in range(MAX_TPDU_LEN):
-                                        if plausible_sw(pb):
-                                            sw2 = self.read_byte()
-                                            if sw2 is None:
-                                                return True
-                                            packet.append(pb)
-                                            packet.append(sw2)
-                                            got_sw = True
-                                            break
-                                        self._note_pre_sw(pb,
-                                                          'non-SW byte during '
-                                                          'unexpected-byte scan')
-                                        pb = self.read_byte()
-                                        if pb is None:
-                                            return True
-                                    break
-                else:
-                    # ATR-based captures (test_8 / test_7): keep the original
-                    # procedure loop unchanged.
-                    data_read = False
-                    for _proc in range(8):
-                        pb = self.read_byte()
-                        if pb is None:
-                            break
-                        if (pb == bIns or pb == (bIns ^ 0xFF)) and not data_read:
-                            # ACK (full match / ~INS): the P3 bytes follow on
-                            # the wire (Lc command data for case 3, Le response
-                            # data for case 2).
-                            data_read = True
-                            for _ in range(p3):
-                                b = self.read_byte()
-                                if b is None:
-                                    break
-                                packet.append(b)
-                        elif (pb == (bIns ^ 0x01)
-                                or pb == ((bIns ^ 0xFF) ^ 0x01)):
-                            # Single-byte match (INS^0x01 / ~INS^0x01):
-                            # read 1 byte, continue handshake.
-                            b = self.read_byte()
-                            if b is None:
                                 break
-                            packet.append(b)
-                        elif (pb == 0x60):
-                            # NULL: card busy; wait for the next procedure byte.
-                            pass
-                        elif (pb == 0x9e or pb == 0x9f):
-                            # T=0 extended-length procedure byte: the next byte
-                            # L is the number of response data bytes the card
-                            # now sends, followed by the status word.
-                            L = self.read_byte()
-                            if L is None:
-                                break
-                            for _ in range(L):
-                                b = self.read_byte()
-                                if b is None:
-                                    break
-                                packet.append(b)
-                        elif plausible_sw(pb):
-                            # SW1: append SW2; the exchange is complete.
-                            sw2 = self.read_byte()
-                            if sw2 is None:
-                                break
-                            packet.append(pb)
-                            packet.append(sw2)
-                            got_sw = True
-                            break
-                        else:
-                            # Mis-framed procedure byte: stop reading.  The
-                            # partial packet is flagged desynced downstream and
-                            # the decoder re-aligns on the next idle gap.
-                            self.put(es, self.samplenum, self.out_ann,
-                                     [0, ["INVALID Procedure Byte"]])
-                            self.log("INVALID Procedure Byte", hex(pb))
-                            self._resync = True
-                            break
                 self.put(es, self.samplenum, self.out_ann, [4, ["T=0"]])
                 if (got_sw and len(packet) >= 7):
                     self.put(es, self.samplenum, self.out_ann, [9, ["APDU", "APDU cls={cls:02x} ins={ins:02x}".format(cls=bClass,ins=bIns), "APDU cls={cls:02x} ins={ins:02x} p1={p1:02x} p2={p2:02x} p3={p3:02x} len={len} status={sw1:02x}{sw2:02x}".format(cls=bClass,ins=bIns,p1=p1,p2=p2,p3=p3,len=p3,sw1=packet[-2],sw2=packet[-1])]])
             elif (self.hasT1):
-                isIBlock,packet = self.t1_parse_block(es)
-                if (isIBlock):
-                    for _ in range(32):  # bounded chain follow-up
-                        isIBlock,packet2 = self.t1_parse_block(es)
-                        if (isIBlock):
-                            packet = packet + packet2
-                            break
+                # One block per step (the M-bit chain is followed inside
+                # t1_parse_block); the old extra chain loop read the next
+                # block -- usually the other side's R-block -- and merged
+                # the following I-block into this packet.
+                isIBlock, packet = self.t1_parse_block(es)
                 self.put(es, self.samplenum, self.out_ann, [4, ["T=1", "T=1 (reassembled)"]])
                 if (len(packet) >= 8):
                     self.put(es, self.samplenum, self.out_ann, [9, ["APDU", "APDU cls={cls:02x} ins={ins:02x}".format(cls=packet[0],ins=packet[1]), "APDU cls={cls:02x} ins={ins:02x} p1={p1:02x} p2={p2:02x} p3={p3:02x} len={len} status={sw1:02x}{sw2:02x}".format(cls=packet[0],ins=packet[1],p1=packet[2],p2=packet[3],p3=packet[4],len=len(packet) - 7,sw1=packet[-2],sw2=packet[-1])]])
@@ -2912,9 +2903,14 @@ class Decoder(srd.Decoder):
                                          flags=GSMTAP_FLAG_BAD_FCS)
                     else:
                         self._idle_low = 0
+                        parity_bad = (self._parity_errors != parity_before)
+                        if parity_bad and not forced_bad:
+                            self.log("APDU flagged BAD_FCS: parity error "
+                                     "in the exchange")
                         self.emit_packet(GSMTAP_SIM_APDU, bytes(packet),
                                          es, self.samplenum,
-                                         flags=GSMTAP_FLAG_BAD_FCS if forced_bad else 0)
+                                         flags=GSMTAP_FLAG_BAD_FCS
+                                         if (forced_bad or parity_bad) else 0)
 
             self.log("PACKETEND", codecs.encode(bytes(packet), 'hex'))
         else:

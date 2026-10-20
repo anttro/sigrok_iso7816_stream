@@ -266,7 +266,6 @@ class TestInverseConvention(unittest.TestCase):
     def test_wait_data_falling_uses_high_idle_and_falling_start(self):
         self.inst._inverse_convention = True
         self.inst.bit_samples = 100
-        self.inst._edge_read = True
         self.inst._min_pulse_samples = 0
         self.inst.samplenum = 0
         conds = []
@@ -282,6 +281,130 @@ class TestInverseConvention(unittest.TestCase):
         self.assertEqual(conds[0][0][self.pd.Decoder.DATA_IDX], 'h')
         self.assertEqual(conds[1][0][self.pd.Decoder.DATA_IDX], 'f')
         self.assertEqual(self.inst._start_fall, self.inst.samplenum)
+
+
+class TestT1Blocks(unittest.TestCase):
+    """T=1 block parsing: NAD/PCB/LEN/INF/LRC, the M-bit chain, and the
+    EOF guards (a truncated block never raises or emits a half INF)."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.gs, cls.pd = _load_iso7816()
+
+    def _make(self, byte_seq):
+        inst = object.__new__(self.pd.Decoder)
+        inst.reset()
+        inst.samplenum = 0
+        inst.out_ann = 0
+        inst.log = lambda *a, **k: None
+        inst.put = lambda *a, **k: None
+        inst.wait = lambda cond=None: [1] * 8
+        inst._bytes = collections.deque(byte_seq)
+        inst.read_byte = lambda: (inst._bytes.popleft()
+                                  if inst._bytes else None)
+        return inst
+
+    def _block(self, nad, pcb, inf):
+        body = [nad, pcb, len(inf)] + list(inf)
+        lrc = 0
+        for b in body:
+            lrc ^= b
+        return body + [lrc]
+
+    def test_i_block(self):
+        inst = self._make(self._block(0x00, 0x00, [0x6f, 0x00]))
+        self.assertEqual(inst.t1_parse_block(0), (True, [0x6f, 0x00]))
+
+    def test_r_and_s_blocks_have_no_inf(self):
+        inst = self._make(self._block(0x00, 0x80, []))
+        self.assertEqual(inst.t1_parse_block(0), (False, []))
+        inst = self._make(self._block(0x00, 0xc0, []))
+        self.assertEqual(inst.t1_parse_block(0), (False, []))
+
+    def test_m_chain_concatenates_inf(self):
+        seq = (self._block(0x00, 0x20, [0x01])
+               + self._block(0x00, 0x00, [0x02]))
+        inst = self._make(seq)
+        self.assertEqual(inst.t1_parse_block(0), (True, [0x01, 0x02]))
+
+    def test_truncated_block_before_lrc_is_clean(self):
+        seq = self._block(0x00, 0x00, [0x6f, 0x00])[:5]  # no LRC
+        inst = self._make(seq)
+        self.assertEqual(inst.t1_parse_block(0), (False, []))
+
+    def test_truncated_inf_is_clean(self):
+        inst = self._make([0x00, 0x00, 0x05, 0x01, 0x02])
+        self.assertEqual(inst.t1_parse_block(0), (False, []))
+
+    def test_decode_step_reads_exactly_one_block(self):
+        # The T=1 caller used to run an extra chain loop after every
+        # I-block: it consumed the peer's R-block and merged the following
+        # I-block's INF into this packet.  One step must parse one block.
+        apdu = [0x00, 0xa4, 0x00, 0x00, 0x00]
+        rblock = self._block(0x00, 0x80, [])
+        inst = self._make(self._block(0x00, 0x00, apdu) + rblock)
+        inst.state = 'DATA'
+        inst.hasT0 = False
+        inst.hasT1 = True
+        inst.bit_samples = 100
+        inst._pps_speed_changed = False
+        inst._resync = False
+        inst._at_eof = lambda: False
+        inst.out_ann = 0
+        inst.emitted = []
+        inst.emit_packet = lambda st, pl, ss, es, flags=0: \
+            inst.emitted.append((bytes(pl), flags))
+        inst._note_discard = lambda *a, **k: None
+        inst._note_pre_sw = lambda *a, **k: None
+        inst._consume_first = lambda: (inst._bytes.popleft()
+                                       if inst._bytes else None)
+        inst.peek_byte = lambda: inst._bytes[0] if inst._bytes else None
+        self.assertTrue(inst.decode_step())
+        self.assertEqual(len(inst.emitted), 1)
+        self.assertEqual(inst.emitted[0][0], bytes(apdu))
+        # The peer's R-block is left for the next step.
+        self.assertEqual(list(inst._bytes), rblock)
+
+    def test_handle_pps_truncated_is_clean(self):
+        inst = self._make([0x55])
+        inst.peeked_samplenum = 0
+        inst.handle_pps()  # pps0 missing: must not raise
+
+    def test_handle_pps_truncated_optional_is_clean(self):
+        inst = self._make([0x55, 0x70])  # PPS0 asks for PPS1..3, then EOF
+        inst.peeked_samplenum = 0
+        inst.handle_pps()  # PPS1 missing: must not raise
+
+
+class TestSamplerateScaling(unittest.TestCase):
+    """The pulse/glitch thresholds scale with the capture rate instead of
+    assuming 16 MHz."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.gs, cls.pd = _load_iso7816()
+
+    def test_samples_for_us(self):
+        inst = object.__new__(self.pd.Decoder)
+        inst.samplerate = 16000000
+        self.assertEqual(inst._samples_for_us(0.125), 2)
+        self.assertEqual(inst._samples_for_us(0.25), 4)
+        self.assertEqual(inst._samples_for_us(0.75), 12)
+        inst.samplerate = 96000000
+        self.assertEqual(inst._samples_for_us(0.125), 12)
+        self.assertEqual(inst._samples_for_us(0.75), 72)
+        inst.samplerate = None
+        self.assertEqual(inst._samples_for_us(0.75), 12)  # 16 MHz fallback
+
+    def test_etu_glitch_floor_scales(self):
+        inst = object.__new__(self.pd.Decoder)
+        inst.samplerate = 96000000
+        # 12-sample spacings are sub-ETU glitches at 96 MHz (floor 72).
+        self.assertEqual(inst._etu_candidate([(12, 0), (12, 1)]),
+                         (None, False))
+        inst.samplerate = 16000000
+        self.assertEqual(inst._etu_candidate([(12, 0), (12, 1)]),
+                         (12, True))
 
 
 class TestValidateT0Apdu(unittest.TestCase):
@@ -386,10 +509,15 @@ class TestValidateT0Apdu(unittest.TestCase):
         # Table 4 pairs (0F ERASE BINARY, 21 VERIFY, 87 GENERAL
         # AUTHENTICATE, A1 SEARCH BINARY, B1 READ BINARY, B3 READ RECORD,
         # C3 ENVELOPE, CB GET DATA, D1 WRITE BINARY, D7 UPDATE BINARY,
-        # DB PUT DATA, DD UPDATE RECORD) plus TS 102 221 AUTHENTICATE 89.
+        # DB PUT DATA, DD UPDATE RECORD), TS 102 221 AUTHENTICATE 89, and
+        # TS 102 221 Table 10.5 MANAGE SECURE CHANNEL 73 / TRANSACT DATA 75
+        # (the v1.9.6 audit found these two missing).
         self.assertEqual(self.pd.ODD_INS, frozenset((
-            0x0F, 0x21, 0x87, 0x89, 0xA1, 0xB1, 0xB3,
+            0x0F, 0x21, 0x73, 0x75, 0x87, 0x89, 0xA1, 0xB1, 0xB3,
             0xC3, 0xCB, 0xDB, 0xD1, 0xD7, 0xDD)))
+        for ins in (0x73, 0x75):
+            with self.subTest(ins=ins):
+                self.assertTrue(self.pd.plausible_ins(ins))
 
     def test_vs_reader_mirror(self):
         # tools/vs_reader.py duplicates the acceptance predicates for its
@@ -968,6 +1096,36 @@ class TestDecodeStep(unittest.TestCase):
         inst.wait = lambda cond=None: [1] * 8
         return inst
 
+    def test_9e_9f_are_status_words(self):
+        # ISO 7816-3 10.3.3 Table 11: '9X' is SW1.  The old code treated
+        # 9E/9F as an "extended-length" procedure byte and consumed SW2 as
+        # a bogus length, losing the status word.
+        for sw1 in (0x9e, 0x9f):
+            with self.subTest(sw1=sw1):
+                inst = self._make(bytes.fromhex('00a40000023f00')
+                                  + bytes([sw1, 0x00]))
+                self.assertTrue(inst.decode_step())
+                self.assertEqual(
+                    inst.emitted,
+                    [(bytes.fromhex('00a40000023f00') + bytes([sw1, 0x00]), 0)])
+
+    def test_parity_error_flags_bad_fcs(self):
+        # A parity error is annotated and must also reach downstream as
+        # GSMTAP_FLAG_BAD_FCS on the emitted packet.
+        inst = self._make(bytes.fromhex('00a40000023f009000'))
+        orig = inst.read_byte
+
+        def read():
+            b = orig()
+            if b == 0x3f:
+                inst._parity_errors += 1
+            return b
+
+        inst.read_byte = read
+        self.assertTrue(inst.decode_step())
+        self.assertEqual(len(inst.emitted), 1)
+        self.assertTrue(inst.emitted[0][1] & self.pd.GSMTAP_FLAG_BAD_FCS)
+
     def test_extended_channel_exchange_frames(self):
         # 'CX' STATUS on channel 4 (v1.9.3): the whole exchange must be
         # read and emitted clean.
@@ -1221,6 +1379,14 @@ class TestAtrHuntDetect(unittest.TestCase):
         self.assertFalse(inst._atr_parsed)
         self.assertEqual(inst.emitted, [])
         self.assertEqual(inst.state, 'DATA')
+
+    def test_truncated_atr_ta_is_clean(self):
+        # T0 says TA1 present but the capture ends: the parse must return
+        # without committing an ATR (or raising on the None byte).
+        inst = self._make([0x3B, 0x10])
+        inst.handle_atr(None)
+        self.assertFalse(inst._atr_parsed)
+        self.assertEqual(inst.emitted, [])
 
     def test_inverse_ts_pattern_is_parsed(self):
         # 0x03 + the raw inverse TS pattern must be committed as 0x3F and
