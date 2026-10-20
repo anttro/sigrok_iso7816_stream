@@ -121,12 +121,16 @@ flags) USB-протокола simtrace2 и не является частью с
 
 ## Использование
 
-Быстрый старт после клонирования (см. «Установка» ниже):
+Быстрый старт (после установки — скачанный архив или клон репозитория;
+см. «Установка» ниже):
 
 ```bash
 ./setup.sh   # проверить sigrok-cli, зарегистрировать симлинк декодера
 ./start.sh   # запись + поток GSMTAP на 127.0.0.1:4729
 ```
+
+В Windows те же два шага — `setup.bat`, затем `start.bat` (см. «Установка»
+ниже).
 
 Умолчания `start.sh`: выводы D5=CLK, D0=I/O, D4=RST, D2=VCC, частота
 дискретизации 16 МГц. Переопределяются аргументами:
@@ -331,27 +335,60 @@ libsigrok ограничивает 12 МГц.  Поэтому `start.sh`/`start.
 
 ## Установка
 
-### Linux
+Оба способа ставят один и тот же декодер — выберите один:
+
+- **Скачать (рекомендуется)** — архив релиза.  Не нужно ничего клонировать и
+  нет истории git: распакуйте, запустите `setup`, затем `start`.  Лучший
+  вариант, если нужен только съём.
+- **Из исходников** — `git clone`.  Тот же рантайм плюс материал для
+  разработки: `tests/` и инструменты трасс и базовой линии
+  (`tools/capture_baseline.sh`, `tools/compare_baseline.sh`,
+  `tools/vs_reader.py`).  Трассы примеров (`examples/`) исключены из git и в
+  любом случае остаются локальными.  В архивах релиза намеренно нет `tests/`,
+  dev-инструментов и `examples/`.
+
+### Скачать (рекомендуется)
+
+Скачайте последний архив со страницы
+[Releases](https://github.com/anttro/sigrok_iso7816_stream/releases/latest):
+
+- `sigrok_iso7816_stream-<version>.tar.gz` — Linux
+- `sigrok_iso7816_stream-<version>.zip` — Windows
+
+К каждому релизу прилагается `SHA256SUMS` — в нём **оба** архива.
+Положите файл рядом со скачанным архивом и проверьте:
 
 ```bash
-git clone git@github.com:anttro/sigrok_iso7816_stream.git
-cd sigrok_iso7816_stream
+sha256sum -c --ignore-missing SHA256SUMS   # GNU coreutils (Linux)
+```
+
+В Windows выполните `certutil -hashfile sigrok_iso7816_stream-<version>.zip SHA256`
+и сравните вывод со строкой `.zip` в `SHA256SUMS`.
+
+#### Linux (скачать)
+
+```bash
+tar xzf sigrok_iso7816_stream-<version>.tar.gz
+cd sigrok_iso7816_stream-<version>
 ./setup.sh
+./start.sh
 ```
 
 `setup.sh` проверяет, что установлены sigrok-cli и пакет прошивки FX2
-(`sigrok-firmware-fx2lafw`), создаёт симлинк репозитория в
+(`sigrok-firmware-fx2lafw`), создаёт симлинк каталога проекта в
 `~/.local/share/libsigrokdecode/decoders/iso7816` (пользовательские
 декодеры перекрывают системные) и опрашивает подключённое устройство на
 предмет максимальной поддерживаемой частоты дискретизации.
 
-### Windows
+#### Windows (скачать)
 
 Предварительные требования:
 
 1. **sigrok-cli** — установщик для Windows (0.7.2 x86_64) с
-   [sigrok.org/wiki/Downloads](https://sigrok.org/wiki/Downloads).
-   Если он не запускается с ошибкой `0xc0150002`, установите
+   [sigrok.org/wiki/Downloads](https://sigrok.org/wiki/Downloads) —
+   протестированная версия.  На этой же странице публикуются ночные сборки
+   для Windows; они могут менять синтаксис sigrok-cli или API декодеров,
+   поэтому поддерживаемой остаётся версия из релизного установщика 0.7.2.  Если sigrok-cli не запускается с ошибкой `0xc0150002`, установите
    [Visual C++ 2010 Redistributable](https://www.microsoft.com/en-us/download/details.aspx?id=26999)
    (`msvcr100.dll` требуется встроенному Python-рантайму).
 2. Прошивка fx2lafw поставляется вместе с установщиком — отдельно скачивать не нужно.
@@ -367,7 +404,42 @@ cd sigrok_iso7816_stream
 - Windows привязывает драйверы к USB-порту, когда нет серийного номера:
   перенос донгла в другой порт может потребовать повторить Zadig.
 
-Затем:
+Затем распакуйте архив `.zip` (в Проводнике: правой кнопкой → «Извлечь все»)
+и запустите в распакованном каталоге:
+
+```bat
+setup.bat
+start.bat
+```
+
+`setup.bat` проверяет sigrok-cli и встроенную прошивку, регистрирует декодер
+этого проекта через junction в
+`%LOCALAPPDATA%\libsigrokdecode\decoders\iso7816` (подтверждается тем, что
+`sigrok-cli -L` показывает `iso7816`), и опрашивает устройство на предмет
+поддерживаемых частот дискретизации.  В zip-архиве релиза bat-файлы уже с
+переводами строк CRLF, поэтому преобразование не требуется.
+`start.bat --help` перечисляет его опции (основное подмножество `start.sh`:
+каналы, частота дискретизации, clock, host/port, pcap, protocol, debug).
+
+### Linux (из исходников)
+
+```bash
+git clone git@github.com:anttro/sigrok_iso7816_stream.git
+cd sigrok_iso7816_stream
+./setup.sh
+```
+
+Свежему клону нужны те же проверки и симлинк `./setup.sh`, что и выше: он
+проверяет sigrok-cli и пакет прошивки FX2, создаёт симлинк каталога проекта
+в `~/.local/share/libsigrokdecode/decoders/iso7816` и опрашивает устройство
+на предмет максимальной частоты дискретизации.
+
+### Windows (из исходников)
+
+Предварительные требования Windows (sigrok-cli и Visual C++ 2010
+Redistributable, встроенная прошивка fx2lafw и настройка драйвера
+Zadig/WinUSB) — те же, что в разделе
+[Windows (скачать)](#windows-скачать) выше.
 
 ```bat
 git clone git@github.com:anttro/sigrok_iso7816_stream.git
@@ -375,11 +447,15 @@ cd sigrok_iso7816_stream
 setup.bat
 ```
 
-`setup.bat` проверяет sigrok-cli и встроенную прошивку, регистрирует декодер
-этого репозитория через junction в
-`%LOCALAPPDATA%\libsigrokdecode\decoders\iso7816` (подтверждается тем, что
-`sigrok-cli -L` показывает `iso7816`), и опрашивает устройство на предмет
-поддерживаемых частот дискретизации.
+`setup.bat` выполняет те же проверки и регистрацию junction, что и выше.
+`start.bat` поддерживает основное подмножество опций (каналы, частота
+дискретизации, clock, host/port, pcap, protocol, debug; полный набор — в
+`start.sh`) — основной формат с пробелом, а `--clk=CH` тоже работает:
+
+```bat
+start.bat --clk D1 --data D6
+start.bat --help
+```
 
 Запись работает так же, как в Linux:
 
@@ -388,7 +464,8 @@ start.bat                   rem запись + поток GSMTAP
 ```
 
 Примечание: bat-файлы требуют переводов строк CRLF; репозиторий следит за
-этим через `.gitattributes`, поэтому свежий клон в Windows уже корректен.
+этим через `.gitattributes`, поэтому свежий клон в Windows уже корректен
+(zip-архив релиза содержит те же файлы с CRLF).
 
 ## Заметки и ограничения по детектированию RST/VCC
 

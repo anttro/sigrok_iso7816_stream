@@ -1019,6 +1019,44 @@ append the measured CLK frequency when known
 The decoder version is defined in `pd.py` as `VERSION = '1.9.7'`.
 The version is printed to the log on decoder startup.
 
+### Release packaging (v1.9.7)
+
+The GitHub release archives let users run the decoder without cloning the
+repo.  `./tools/build_release.sh [REF]` (REF defaults to `HEAD`) builds
+`dist/sigrok_iso7816_stream-<VERSION>.tar.gz` (Linux) and
+`dist/sigrok_iso7816_stream-<VERSION>.zip` (Windows) plus
+`dist/SHA256SUMS`.  `VERSION` comes from the ref's `pd.py`; a `v*` REF must
+equal it.
+
+The release file set is an explicit allowlist passed to `git archive` as its
+pathspec, and also compared exactly against both archive listings (missing
+*and* unexpected entries fail): the decoder (`__init__.py`, `pd.py`,
+`gsmtap_stream.py`), the scripts (`setup.sh`/`start.sh`,
+`setup.bat`/`start.bat`), `tools/vs_reader.py`, `README.md`, `README_RUS.md`,
+`LICENSE`, and every `resources/` image referenced from `README.md`.  Tests,
+`AGENTS.md`, the CI config, the development tools and the unreferenced
+`resources/` images never enter the release.  No `export-ignore` rules are
+used, so GitHub's own source archives still contain the full tree.  `dist/`
+is gitignored.
+
+Both archives are unpacked and verified: `pd.py` VERSION, `py_compile` of the
+three modules, `bash -n` of the shell scripts, the tar exec bits, CRLF on the
+`.bat` files and no CR in the `.sh` files.  The archives are built in a temp
+staging dir; only after every check passes are stale `dist/` archives removed
+and the new tar.gz/zip/`SHA256SUMS` moved in (a failed build leaves `dist/`
+untouched, and `gh release upload dist/*` can never attach a stale version).
+
+`.github/workflows/release.yml` runs on a `v*` tag push: unit tests
+(`tests/test_gsmtap.py`), tag == `pd.py` VERSION, the build script, then
+`gh release upload --clobber` (or `gh release create --draft` when there is
+no release yet) followed by `gh release edit --draft=false`, with
+`release-<tag>` concurrency.  **Release process:** commit the docs, workflow
+and scripts first, then tag `v1.9.7` and push the tag (with user approval) -
+the workflow must exist in the tagged commit, and the archive ships the
+committed READMEs.  Release notes are GitHub's auto-generated notes from the
+commits; `AGENTS.md` and `tests/` are not in the archive.  Packaging/docs
+only - no decoder behavior change, and `VERSION` is unchanged.
+
 ### Testing after decoder changes
 
 After any change to `pd.py`:

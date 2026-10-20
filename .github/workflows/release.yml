@@ -1,0 +1,63 @@
+name: release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - name: Unit tests
+        run: python3 tests/test_gsmtap.py
+
+      - name: Verify tag matches pd.py VERSION
+        shell: bash
+        run: |
+          set -euo pipefail
+          version=$(sed -n "s/^VERSION = '\([0-9][0-9.]*\)'.*/\1/p" pd.py)
+          if [ -z "$version" ]; then
+            echo "::error::cannot read VERSION from pd.py"
+            exit 1
+          fi
+          if [ "$GITHUB_REF_NAME" != "v$version" ]; then
+            echo "::error::tag $GITHUB_REF_NAME does not match pd.py VERSION '$version'"
+            exit 1
+          fi
+          echo "tag $GITHUB_REF_NAME matches pd.py VERSION $version"
+
+      - name: Build release archives
+        run: ./tools/build_release.sh "$GITHUB_REF_NAME"
+
+      - name: Create or update the GitHub release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          version=$(sed -n "s/^VERSION = '\([0-9][0-9.]*\)'.*/\1/p" pd.py)
+          # Upload into an existing release first.  If the release does not
+          # exist yet, create it as a draft so the published release never
+          # appears with a partial asset set.
+          if ! gh release upload "$GITHUB_REF_NAME" dist/* --clobber; then
+            gh release create "$GITHUB_REF_NAME" dist/* --draft \
+              --title "sigrok_iso7816_stream $version" --generate-notes
+          fi
+          # Publish a new draft and re-publish an existing one.
+          gh release edit "$GITHUB_REF_NAME" --draft=false

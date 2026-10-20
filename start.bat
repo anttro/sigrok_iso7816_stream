@@ -36,26 +36,42 @@ if /i "%~1"=="--no-rst"      ( set "RST="            & shift & goto :argloop )
 if /i "%~1"=="--no-vcc"      ( set "VCC="            & shift & goto :argloop )
 if /i "%~1"=="-h"            ( goto :usage )
 if /i "%~1"=="--help"        ( goto :usage )
+rem Value options also accept the --opt=value form (usage shows the space form).
+for /f "tokens=1,* delims==" %%A in ("%~1") do (
+    if /i "%%A"=="--clk"        ( set "CLK=%%B"        & shift & goto :argloop )
+    if /i "%%A"=="--data"       ( set "DATA=%%B"       & shift & goto :argloop )
+    if /i "%%A"=="--rst"        ( set "RST=%%B"        & shift & goto :argloop )
+    if /i "%%A"=="--vcc"        ( set "VCC=%%B"        & shift & goto :argloop )
+    if /i "%%A"=="--samplerate" ( set "SAMPLERATE=%%B" & shift & goto :argloop )
+    if /i "%%A"=="--clock"      ( set "CLOCK=%%B"      & shift & goto :argloop )
+    if /i "%%A"=="--host"       ( set "HOST=%%B"       & shift & goto :argloop )
+    if /i "%%A"=="--port"       ( set "PORT=%%B"       & shift & goto :argloop )
+    if /i "%%A"=="--pcap"       ( set "PCAP=%%B"       & shift & goto :argloop )
+    if /i "%%A"=="--protocol"   ( set "PROTOCOL=%%B"   & shift & goto :argloop )
+)
 echo Unknown option: %~1
 exit /b 1
 
 :usage
 echo Usage: %~n0 [OPTIONS]
-echo   --clk=CH          CLK channel        default: %CLK%
-echo   --data=CH         I/O channel        default: %DATA%
-echo   --rst=CH          RST channel        default: %RST%
-echo   --vcc=CH          VCC channel        default: %VCC%
-echo   --samplerate=SR   Sample rate        default: %SAMPLERATE%
-echo   --clock=MODE      native/detect/sample_as_clock
-echo   --host=IP         GSMTAP destination default: 127.0.0.1
-echo   --port=N          GSMTAP port        default: 4729
-echo   --pcap=FILE       Also write decoded events to FILE (no spaces in path)
+echo   --clk CH          CLK channel        default: %CLK%
+echo   --data CH         I/O channel        default: %DATA%
+echo   --rst CH          RST channel        default: %RST%
+echo   --vcc CH          VCC channel        default: %VCC%
+echo   --samplerate SR   Sample rate        default: %SAMPLERATE%
+echo   --clock MODE      native/detect/sample_as_clock
+echo   --host IP         GSMTAP destination default: 127.0.0.1
+echo   --port N          GSMTAP port        default: 4729
+echo   --pcap FILE       Also write decoded events to FILE (no spaces in path)
 echo   --debug           Full decoder + sigrok output (all annotation rows + -l 4).
 echo
 echo   By default only decoded APDUs and decoder warnings/errors are shown.
-echo   --protocol=MODE   T=0 (default), T=1, or auto (mid-session decode)
+echo   --protocol MODE   T=0 (default), T=1, or auto (mid-session decode)
 echo   --no-rst          Disable RST tracking
 echo   --no-vcc          Disable VCC tracking
+echo.
+echo   The --clk=CH form also works.  start.bat supports this core subset;
+echo   start.sh has the full option set.
 echo.
 echo To log output on Windows use redirection: %~n0 ... ^> capture.log 2^>^&1
 exit /b 0

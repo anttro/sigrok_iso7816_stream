@@ -117,12 +117,16 @@ data flags and are not part of the libosmocore spec.
 
 ## Usage
 
-Quick start after cloning (see Installation below):
+Quick start (after installing — release download or source checkout; see
+Installation below):
 
 ```bash
 ./setup.sh   # check sigrok-cli, register decoder symlink
 ./start.sh   # capture + GSMTAP stream to 127.0.0.1:4729
 ```
+
+On Windows the same two steps are `setup.bat` then `start.bat` (see
+Installation below).
 
 `start.sh` defaults: pins D5=CLK, D0=I/O, D4=RST, D2=VCC, 16 MHz samplerate.
 Override via args:
@@ -318,27 +322,61 @@ same restriction.
 
 ## Installation
 
-### Linux
+Both ways install the same decoder — pick one:
+
+- **Download (recommended)** — a release archive.  Nothing to clone and no git
+  history: extract it, run `setup`, run `start`.  Best if you only want to
+  capture.
+- **Source checkout** — a `git clone`.  The same runtime plus the development
+  material: `tests/` and the trace/baseline tools (`tools/capture_baseline.sh`,
+  `tools/compare_baseline.sh`, `tools/vs_reader.py`).  The example traces
+  (`examples/`) are gitignored and stay local in either case.  The release
+  archives intentionally do not contain `tests/`, the dev tools or
+  `examples/`.
+
+### Download (recommended)
+
+Grab the latest archive from
+[Releases](https://github.com/anttro/sigrok_iso7816_stream/releases/latest):
+
+- `sigrok_iso7816_stream-<version>.tar.gz` — Linux
+- `sigrok_iso7816_stream-<version>.zip` — Windows
+
+Each release also publishes `SHA256SUMS`, which lists **both** archives; keep
+it next to the file you downloaded and verify:
 
 ```bash
-git clone git@github.com:anttro/sigrok_iso7816_stream.git
-cd sigrok_iso7816_stream
+sha256sum -c --ignore-missing SHA256SUMS   # GNU coreutils (Linux)
+```
+
+On Windows run `certutil -hashfile sigrok_iso7816_stream-<version>.zip SHA256`
+and compare the output with the `.zip` line in `SHA256SUMS`.
+
+#### Linux (download)
+
+```bash
+tar xzf sigrok_iso7816_stream-<version>.tar.gz
+cd sigrok_iso7816_stream-<version>
 ./setup.sh
+./start.sh
 ```
 
 `setup.sh` verifies sigrok-cli and the FX2 firmware package
-(`sigrok-firmware-fx2lafw`) are installed, symlinks the repo into
+(`sigrok-firmware-fx2lafw`) are installed, symlinks the project directory into
 `~/.local/share/libsigrokdecode/decoders/iso7816` (user-local decoders shadow
 system-wide ones), and probes the connected device for its maximum supported
 samplerate.
 
-### Windows
+#### Windows (download)
 
 Prerequisites:
 
 1. **sigrok-cli** Windows installer (0.7.2 x86_64) from
-   [sigrok.org/wiki/Downloads](https://sigrok.org/wiki/Downloads).
-   If it fails to start with error `0xc0150002`, install the
+   [sigrok.org/wiki/Downloads](https://sigrok.org/wiki/Downloads) — the tested
+   release.  Nightly Windows installers are also published on that page; they
+   may change the sigrok-cli syntax or the decoder API, so the 0.7.2
+   release installer remains the supported version.
+   If sigrok-cli fails to start with error `0xc0150002`, install the
    [Visual C++ 2010 Redistributable](https://www.microsoft.com/en-us/download/details.aspx?id=26999)
    (`msvcr100.dll` is required by the bundled Python runtime).
 2. fx2lafw firmware ships bundled with the installer — no separate download.
@@ -354,7 +392,40 @@ Driver setup (FX2 dongles need WinUSB, the vendor driver won't work):
 - Windows binds drivers per USB port when no serial number is present:
   moving the dongle to another port may require repeating Zadig.
 
-Then:
+Then extract the release `.zip` (right-click → Extract All in Explorer) and
+run, inside the extracted folder:
+
+```bat
+setup.bat
+start.bat
+```
+
+`setup.bat` verifies sigrok-cli and bundled firmware, registers this project's
+decoder via a junction into `%LOCALAPPDATA%\libsigrokdecode\decoders\iso7816`
+(confirmed by `sigrok-cli -L` listing `iso7816`), and probes the device's
+accepted samplerates.  The release zip ships the batch files with CRLF line
+endings, so no conversion is needed.  `start.bat --help` lists its options
+(the core subset of `start.sh`: channels, samplerate, clock, host/port, pcap,
+protocol, debug).
+
+### Linux (source checkout)
+
+```bash
+git clone git@github.com:anttro/sigrok_iso7816_stream.git
+cd sigrok_iso7816_stream
+./setup.sh
+```
+
+A fresh clone needs the same `./setup.sh` checks and symlink as above: it
+verifies sigrok-cli and the FX2 firmware package, symlinks the project
+directory into `~/.local/share/libsigrokdecode/decoders/iso7816` and probes
+the device's maximum samplerate.
+
+### Windows (source checkout)
+
+The Windows prerequisites (sigrok-cli + the Visual C++ 2010 Redistributable,
+the bundled fx2lafw firmware, and the Zadig/WinUSB driver setup) are the same
+as in [Windows (download)](#windows-download) above.
 
 ```bat
 git clone git@github.com:anttro/sigrok_iso7816_stream.git
@@ -362,10 +433,15 @@ cd sigrok_iso7816_stream
 setup.bat
 ```
 
-`setup.bat` verifies sigrok-cli and bundled firmware, registers this repo's
-decoder via a junction into `%LOCALAPPDATA%\libsigrokdecode\decoders\iso7816`
-(confirmed by `sigrok-cli -L` listing `iso7816`), and probes the device's
-accepted samplerates.
+`setup.bat` performs the same checks and junction registration as above.
+`start.bat` supports the core option subset (channels, samplerate, clock,
+host/port, pcap, protocol, debug; `start.sh` has the full set) — the space
+form is the primary one, and `--clk=CH` also works:
+
+```bat
+start.bat --clk D1 --data D6
+start.bat --help
+```
 
 Capture works the same as on Linux:
 
@@ -374,7 +450,8 @@ start.bat                   rem capture + GSMTAP stream
 ```
 
 Note: batch files need CRLF line endings; the repo enforces this via
-`.gitattributes`, so a fresh clone on Windows is already correct.
+`.gitattributes`, so a fresh clone on Windows is already correct (the release
+zip ships the same CRLF files).
 
 ## RST/VCC detection notes and limitations
 
