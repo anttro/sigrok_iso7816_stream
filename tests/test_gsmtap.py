@@ -880,6 +880,52 @@ class TestDecodeStep(unittest.TestCase):
         self.assertEqual(inst.discarded[0][0], 0xfe)
         self.assertIn('idle-line noise', inst.discarded[0][1])
 
+    def test_immediate_sw_rejection_frames(self):
+        # A command rejected with SW1 SW2 instead of an ACK (ISO 7816-3
+        # §10.3.3) must not be read as command data; the exchange and the
+        # following one must frame separately.
+        inst = self._make(bytes.fromhex('00b00000106a82' +
+                                        '00a40004009000'))
+        self.assertTrue(inst.decode_step())
+        self.assertEqual(inst.emitted,
+                         [(bytes.fromhex('00b00000106a82'), 0)])
+        self.assertTrue(inst.decode_step())
+        self.assertEqual(inst.emitted[1],
+                         (bytes.fromhex('00a40004009000'), 0))
+
+    def test_short_response_is_split_and_flagged(self):
+        # Lr < Le (6282 end-of-file): the SW inside the P3-byte read ends
+        # the response, and the packet is flagged BAD_FCS (it used to be a
+        # silent total loss).
+        inst = self._make(bytes.fromhex('00b0000010b012349000'))
+        self.assertTrue(inst.decode_step())
+        self.assertEqual(inst.emitted,
+                         [(bytes.fromhex('00b000001012349000'),
+                           self.gs.GSMTAP_FLAG_BAD_FCS)])
+
+    def test_short_response_replays_following_exchange(self):
+        # A short response followed by another command: the split must
+        # replay the tail so the next exchange is framed intact.
+        inst = self._make(bytes.fromhex('00b0000010b012349000' +
+                                        '00a40004009000'))
+        self.assertTrue(inst.decode_step())
+        self.assertEqual(inst.emitted[0],
+                         (bytes.fromhex('00b000001012349000'),
+                          self.gs.GSMTAP_FLAG_BAD_FCS))
+        self.assertTrue(inst.decode_step())
+        self.assertEqual(inst.emitted[1],
+                         (bytes.fromhex('00a40004009000'), 0))
+
+    def test_le_256_response_data_is_kept(self):
+        # P3=0 in an outgoing command is Le=256 (ISO 7816-3 §10.3.2): the
+        # data after the ACK must be appended, not discarded — including a
+        # data byte that happens to equal INS.
+        payload = 'a5' * 8 + 'b0' + 'a5' * 7
+        inst = self._make(bytes.fromhex('00b0000000b0' + payload + '9000'))
+        self.assertTrue(inst.decode_step())
+        self.assertEqual(inst.emitted,
+                         [(bytes.fromhex('00b0000000' + payload + '9000'), 0)])
+
 
 class TestAtrHuntDetect(unittest.TestCase):
     """The ATR-hunt command-detect handoff in handle_atr(), driven by a

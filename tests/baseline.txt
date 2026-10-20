@@ -1,7 +1,7 @@
-=== Baseline captured 2026-10-18T02:13:20+03:00 ===
+=== Baseline captured 2026-10-20T16:56:58+03:00 ===
 
 === test_8 ===
-('=== iso7816 decoder v1.9.4 ===',)
+('=== iso7816 decoder v1.9.5 ===',)
 ('etu recovered (samples):', 1237)
 iso7816-1: RST deasserted
 ('RST deasserted',)
@@ -36,7 +36,7 @@ Degradation metrics:
 RESULT: OK - capture fully explained (reader + CAT + valid retries)
 
 === test_7 ===
-('=== iso7816 decoder v1.9.4 ===',)
+('=== iso7816 decoder v1.9.5 ===',)
 ('etu recovered (samples):', 1236)
 iso7816-1: RST deasserted
 ('RST deasserted',)
@@ -77,7 +77,7 @@ Degradation metrics:
 RESULT: OK - capture fully explained (reader + CAT + valid retries)
 
 === xiaomi_phone_sample ===
-('=== iso7816 decoder v1.9.4 ===',)
+('=== iso7816 decoder v1.9.5 ===',)
 ('etu recovered (samples):', 53)
 (11674007, 'CHKSUM ERROR: ', 0, 'bits: ', [0, 0, 0, 1, 0, 0, 1, 1, 1, 1])
 iso7816-1: CHKSUM ERROR bits=[0, 0, 0, 1, 0, 0, 1, 1, 1, 1]
@@ -102,7 +102,7 @@ Degradation metrics:
 RESULT: OK - capture fully explained (reader + CAT + valid retries)
 
 === xiaomi_mi_a1_coldboot ===
-('=== iso7816 decoder v1.9.4 ===',)
+('=== iso7816 decoder v1.9.5 ===',)
 ('RST low at start: expecting cold-boot ATR',)
 iso7816-1: RST deasserted
 ('RST deasserted',)
@@ -112,12 +112,12 @@ CHKSUM ERROR count: 0
 CONCAT APDU count: 0
 reader exchanges         : 0
 capture ATRs             : 1
-capture APDUs            : 473
+capture APDUs            : 475
 byte-exact matches (LCS) : 0
 reader exchanges not in capture (pre-capture / dropped): 0
 capture APDUs not in reader log:
   - proactive/CAT (unlogged by reader SDK): 10
-  - valid exchanges (reader retries/dupes): 463
+  - valid exchanges (reader retries/dupes): 465
   - GARBAGE (mis-framed/desync): 0
 
 Degradation metrics:
@@ -129,7 +129,7 @@ Degradation metrics:
 RESULT: OK - capture fully explained (reader + CAT + valid retries)
 
 === 4gmodem_coldboot ===
-('=== iso7816 decoder v1.9.4 ===',)
+('=== iso7816 decoder v1.9.5 ===',)
 ('RST low at start: expecting cold-boot ATR',)
 iso7816-1: RST deasserted
 ('RST deasserted',)
@@ -156,7 +156,7 @@ Degradation metrics:
 RESULT: OK - capture fully explained (reader + CAT + valid retries)
 
 === alcor_reader_sample ===
-('=== iso7816 decoder v1.9.4 ===',)
+('=== iso7816 decoder v1.9.5 ===',)
 ('RST low at start: expecting cold-boot ATR',)
 iso7816-1: RST deasserted
 ('RST deasserted',)
@@ -189,7 +189,7 @@ Degradation metrics:
 RESULT: OK - capture fully explained (reader + CAT + valid retries)
 
 === samsung_A55_coldboot_new_cable ===
-('=== iso7816 decoder v1.9.4 ===',)
+('=== iso7816 decoder v1.9.5 ===',)
 ('RST low at start: expecting cold-boot ATR',)
 iso7816-1: RST deasserted
 ('RST deasserted',)
@@ -216,7 +216,7 @@ Degradation metrics:
 RESULT: OK - capture fully explained (reader + CAT + valid retries)
 
 === samsung_A55_coldboot_new_cable_sim2 ===
-('=== iso7816 decoder v1.9.4 ===',)
+('=== iso7816 decoder v1.9.5 ===',)
 ('RST low at start: expecting cold-boot ATR',)
 iso7816-1: RST deasserted
 ('RST deasserted',)
@@ -243,7 +243,7 @@ Degradation metrics:
 RESULT: OK - capture fully explained (reader + CAT + valid retries)
 
 === samsung_S21p_coldboot_new_cable ===
-('=== iso7816 decoder v1.9.4 ===',)
+('=== iso7816 decoder v1.9.5 ===',)
 ('RST low at start: expecting cold-boot ATR',)
 iso7816-1: RST deasserted
 ('RST deasserted',)
@@ -270,7 +270,7 @@ Degradation metrics:
 RESULT: OK - capture fully explained (reader + CAT + valid retries)
 
 === samsung_S21p_coldboot_new_cable_sim2 ===
-('=== iso7816 decoder v1.9.4 ===',)
+('=== iso7816 decoder v1.9.5 ===',)
 ('RST low at start: expecting cold-boot ATR',)
 iso7816-1: RST deasserted
 ('RST deasserted',)
@@ -359,7 +359,11 @@ test_bit_dense_valid_cla_is_not_idle_noise (__main__.TestDecodeStep.test_bit_den
 test_ex_class_exchange_frames (__main__.TestDecodeStep.test_ex_class_exchange_frames) ... ok
 test_extended_channel_exchange_frames (__main__.TestDecodeStep.test_extended_channel_exchange_frames) ... ok
 test_idle_noise_still_discarded (__main__.TestDecodeStep.test_idle_noise_still_discarded) ... ok
+test_immediate_sw_rejection_frames (__main__.TestDecodeStep.test_immediate_sw_rejection_frames) ... ok
 test_invalid_ins_re_frame_recovers_command (__main__.TestDecodeStep.test_invalid_ins_re_frame_recovers_command) ... ok
+test_le_256_response_data_is_kept (__main__.TestDecodeStep.test_le_256_response_data_is_kept) ... ok
+test_short_response_is_split_and_flagged (__main__.TestDecodeStep.test_short_response_is_split_and_flagged) ... ok
+test_short_response_replays_following_exchange (__main__.TestDecodeStep.test_short_response_replays_following_exchange) ... ok
 test_text_byte_boundary_is_discarded_not_framed (__main__.TestDecodeStep.test_text_byte_boundary_is_discarded_not_framed) ... ok
 test_glitch_low_pulse_removed (__main__.TestDeglitchEdges.test_glitch_low_pulse_removed) ... ok
 test_no_edges (__main__.TestDeglitchEdges.test_no_edges) ... ok
@@ -435,6 +439,6 @@ test_valid_ins_odd_variants (__main__.TestValidateT0Apdu.test_valid_ins_odd_vari
 test_vs_reader_mirror (__main__.TestValidateT0Apdu.test_vs_reader_mirror) ... ok
 
 ----------------------------------------------------------------------
-Ran 95 tests in 0.028s
+Ran 99 tests in 0.032s
 
 OK

@@ -230,6 +230,12 @@ filtered from stderr.
   recovering the real command.  Every consumed-but-unemitted byte is
   explicitly logged (`discarded byte 0x…: reason`); idle 0x00/0xFF discards
   are rate-limited, non-idle discards always produce a decoder annotation.
+- A card may finish a command with SW1 SW2 at the first procedure byte
+  (ISO 7816-3 §10.3.3), including a case-2 command with P3 > 0: the SW is
+  framed as the status word, not read as command data.  A response
+  **shorter than Le** is split at the status word and the packet is
+  flagged `BAD_FCS` (the following exchanges stay intact), and `P3=0`
+  (Le=256) response data is kept.
 
 Performance: in native CLK mode the decoder calibrates samples per CLK
 edge once from the ATR's first frame, then advances bit timing with

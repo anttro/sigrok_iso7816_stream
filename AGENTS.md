@@ -333,6 +333,37 @@ Known limitation: no on-disk fixture reproduces the exact live failure (all
 real captures contain a 372 ATR), so end-to-end proof needs a re-captured
 `.sr` from the failing phone; the unit tests cover the loop-escape logic.
 
+### v1.9.5: T=0 framing — immediate SW, short responses, Le=256
+
+The audit's P0 framing fixes, each pinned by a `TestDecodeStep` vector:
+
+- **Immediate SW.**  The first post-header byte is classified as a status
+  word before the ACK/data decision.  ISO 7816-3 §10.3.3 lets the card
+  finish at the first procedure byte; a case-2 rejection (`6A82`, `6CXX`,
+  ...) carries no ACK and used to be read as command data (the exchange
+  and the following one were silently consumed).
+- **Short responses (Lr < Le).**  The ACK path still reads the P3 bytes,
+  but if the next byte is not SW1 the buffer is split at the first
+  plausible SW1 followed by a plausible CLA, the tail is replayed into
+  `_replay`, and the packet is emitted with `BAD_FCS`.  Previously the SW
+  scan discarded the real SW, merged the following exchanges into a
+  clean-looking packet, and at EOF lost the exchange silently.  A short
+  read with no plausible split is emitted flagged and resynced.
+- **P3=0 = Le=256.**  For an outgoing command P3=0 requests 256 bytes
+  (§10.3.2).  The response data used to be discarded; it is now read until
+  SW and kept.  The read-until-SW ambiguity on data bytes that look like
+  SW1 remains (inherent to T=0 sniffing).
+- **~INS ACK.**  One data byte per ACK (Table 11) via the new
+  `_t0_read_response_data()` helper, instead of "all remaining".
+- **Case 4.**  ISO 7816-3 §12.2/Table 14 map case 4 to a separate GET
+  RESPONSE; the ACK path now appends any inline data instead of dropping
+  it (permissive extension; conforming cards send SW/61XY there).
+
+Validation: 99/99 unit tests; the 10-trace suite is unchanged except
+`xiaomi_mi_a1_coldboot` 473 -> 475 APDUs (two previously lost exchanges
+recovered), 0 CHKSUM/CONCAT/BAD_FCS/GARBAGE, `RESULT: OK`; all other traces
+identical; `compare_baseline.sh` reports IDENTICAL.  VERSION -> 1.9.5.
+
 ### v1.9.4: decode_step/hunt unit coverage + hunt EOF guard
 
 The v1.9.3 review's residual risk -- the new acceptance classes were only
@@ -883,7 +914,7 @@ append the measured CLK frequency when known
 
 ### Versioning
 
-The decoder version is defined in `pd.py` as `VERSION = '1.9.4'`.
+The decoder version is defined in `pd.py` as `VERSION = '1.9.5'`.
 The version is printed to the log on decoder startup.
 
 ### Testing after decoder changes
@@ -1064,23 +1095,34 @@ no `0xff`/`0xfc` garbage.
 
 Commands that carry command-data (e.g. `80 12 … d0`, P3=208) send those
 P3 bytes on the wire **before** the card's first procedure byte.  The
-framing now distinguishes the cases by the card's first procedure byte:
+framing classifies the first post-header byte in this order (v1.9.5):
 
-- If the first post-header byte **is the ACK (== INS)** → case 2/4: the
-  terminal sent no command data; read `P3` response bytes (+SW).
-- Otherwise the byte is terminal command data → case 3/4: read `P3`
+- **SW1** (`0x61-0x6F`/`0x90-0x9F`) → the card finished with SW1 SW2 at the
+  first procedure byte (ISO 7816-3 §10.3.3; a case-2 rejection such as
+  `6A82`/`6CXX` carries no ACK).
+- **ACK (== INS)** → case 2/4: the terminal sent no command data.  Read the
+  `P3` response bytes, then the SW.  `P3=0` is Le=256 (§10.3.2): read the
+  response data until the SW.  If the card returns **fewer** bytes than Le
+  (`6282` end of file), the buffer is split at the first plausible SW1
+  followed by a plausible CLA, the tail is replayed and the packet is
+  flagged BAD_FCS (v1.9.5; previously the SW scan discarded the real SW and
+  the following exchanges could be merged silently).
+- **~INS** → byte-by-byte transfer: one data byte per ACK, read until SW.
+- Otherwise → case 3/4: the byte is terminal command data; read `P3`
   command-data bytes, then the card's procedure byte (ACK/SW/`9E`/`9F`).
-  On ACK (case 4) the response is read `P3` response bytes (+SW).
+  On ACK, append any inline response data until SW (ISO 7816-3 §12.2 maps
+  case 4 to a separate GET RESPONSE, so conforming cards send SW/61XY
+  here; the append is a permissive extension).
 
 This consolidates case-3/4 exchanges (e.g. the `80 12`/`80 14` STK envelope
 commands) into one C-APDU = header + command data, R-APDU = response + SW
-APDU, instead of fragmenting them across frames.  It is gated to
-`_edge_read` (mid-session / gated-CLK captures) so ATR-based captures
-(`test_8` / `test_7`) keep the original framing unchanged and stay at
-0 garbage.
+APDU, instead of fragmenting them across frames.
 
-All paths use P3-bounded reads (v1.1.1 reverted the read-until-SW
-experiment from v1.1.0 which mis-identified FCP `0x62` as SW1).
+P3-bounded reads are kept for case 2 (`Lr == Le`): the read-until-SW
+experiment from v1.1.0 mis-identified FCP `0x62` as SW1 and was reverted.
+Where the length is unknown (P3=0, case-4 inline data) the read-until-SW
+ambiguity remains — a data byte that looks like SW1 is indistinguishable
+on the wire.
 
 ## Decoder methods tried — reliability registry
 
@@ -1137,11 +1179,12 @@ discarded ideas.  "Proven" = kept in `pd.py`; "Rejected" = do not re-add.
   ATR/PPS/DATA + mid-session.  Reliable; current architecture.
 - **`hasT0`/`hasT1` guards + init.** Prevents `AttributeError` and skips byte
   reading until a protocol is known.  Reliable.
-- **T=0 case-3/4 ACK==INS discriminator.** First post-header byte == INS ⇒
-  case 2/4 (response bounded by `P3`); else command data (read `P3`, then
-  the procedure byte).  Reliable for consolidating STK envelope commands.
-  Gated to `_edge_read`.  P3-bounded reads avoid FCP tag misidentification
-  (v1.1.1 reverted read-until-SW from v1.1.0).
+- **T=0 procedure-byte classification (v1.9.5).** The first post-header
+  byte is SW1 ⇒ immediate status word; ACK (== INS) ⇒ case 2/4 (P3
+  response bytes, short-read split + BAD_FCS); ~INS ⇒ one byte per ACK;
+  else command data (case 3/4).  Reliable for consolidating STK envelope
+  commands.  P3-bounded reads avoid FCP tag misidentification (v1.1.1
+  reverted read-until-SW from v1.1.0).
 - **1.5-ETU start-bit guard in `wait_data_falling`.** `min_high = 1.5 *
   bit_samples` distinguishes genuine inter-byte idle gaps (≥2 ETU per ISO
   7816-3) from intra-byte HIGH periods (≤1 ETU).  Prevents byte misalignment
