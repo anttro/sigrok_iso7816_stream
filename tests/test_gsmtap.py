@@ -151,6 +151,139 @@ class TestDesyncHelpers(unittest.TestCase):
         self.assertFalse(self.pd.is_desynced(b'\x00' * 7))
 
 
+    def test_resync_idle_waits_on_a_level_condition(self):
+        # The re-align must WAIT for DATA (a level condition that advances
+        # the sample counter).  It used to call wait({'skip': 0}) in a loop,
+        # which never advanced -- a no-op repeated on the same sample.
+        inst = object.__new__(self.pd.Decoder)
+        inst.reset()
+        inst.bit_samples = 100
+        inst._inverse_convention = False  # normally set by start()
+        inst._start_fall = None
+        inst.samplenum = 0
+        levels = [0, 0, 1]
+        calls = []
+
+        def wait(cond):
+            calls.append(cond)
+            want = None
+            if isinstance(cond, list):
+                for c in cond:
+                    if self.pd.Decoder.DATA_IDX in c:
+                        want = c[self.pd.Decoder.DATA_IDX]
+            while levels:
+                inst.samplenum += 10
+                lvl = levels.pop(0)
+                if (want == 'h' and lvl == 1) or (want == 'l' and lvl == 0):
+                    return [lvl] * 8
+            inst.samplenum += 10
+            return [1] * 8
+
+        inst.wait = wait
+        inst.resync_idle()
+        self.assertEqual(len(calls), 1)
+        self.assertIsInstance(calls[0], list)
+        self.assertIn(self.pd.Decoder.DATA_IDX, calls[0][0])
+        # it advanced through the two LOW samples to the HIGH one
+        self.assertEqual(inst.samplenum, 30)
+
+
+class TestEtuCandidate(unittest.TestCase):
+    """The mid-session ETU estimator's burst validation (_etu_candidate)."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.gs, cls.pd = _load_iso7816()
+
+    def setUp(self):
+        self.inst = object.__new__(self.pd.Decoder)
+
+    def test_zero_run_guard_is_rejected(self):
+        # All-zero characters: 10-ETU LOW runs + a short HIGH inter-byte
+        # guard.  The smallest recurring spacing is the guard, not the ETU.
+        pairs = [(1000, 0), (200, 1)] * 8
+        etu, ok = self.inst._etu_candidate(pairs)
+        self.assertEqual(etu, 200)
+        self.assertFalse(ok)
+
+    def test_single_spacing_is_rejected(self):
+        # A lone 0x00 character yields one 10-ETU run (10x the true ETU).
+        self.assertEqual(self.inst._etu_candidate([(1000, 0)]),
+                         (None, False))
+        self.assertEqual(self.inst._etu_candidate([(8, 0)]),
+                         (None, False))
+
+    def test_normal_burst_is_accepted(self):
+        # A 1-ETU LOW spacing (start bit / data run) alongside 2- and
+        # 3-ETU runs: the recurring minimum is the true ETU.
+        pairs = [(100, 0), (100, 1), (200, 0), (300, 1),
+                 (100, 0), (100, 1), (200, 0)]
+        etu, ok = self.inst._etu_candidate(pairs)
+        self.assertEqual(etu, 100)
+        self.assertTrue(ok)
+
+    def test_ff_burst_is_accepted(self):
+        # 0xFF: 1-ETU LOW start pulses + long HIGH runs.  The minimum is a
+        # LOW run (the start bit), so the guard heuristic must not fire.
+        pairs = [(100, 0), (900, 1), (100, 0), (900, 1), (100, 0)]
+        etu, ok = self.inst._etu_candidate(pairs)
+        self.assertEqual(etu, 100)
+        self.assertTrue(ok)
+
+
+class TestInverseConvention(unittest.TestCase):
+    """ISO 7816-3 7.1: inverse = inverted data, msb first; the start bit
+    stays a falling edge from an idle-HIGH line (the old code assumed an
+    idle-LOW line / rising start)."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.gs, cls.pd = _load_iso7816()
+
+    def setUp(self):
+        self.inst = object.__new__(self.pd.Decoder)
+        self.inst.reset()
+
+    def test_get_bytes_direct_lsb_first(self):
+        self.inst._inverse_convention = False
+        self.assertEqual(self.inst.get_bytes([1, 0, 0, 0, 0, 0, 0, 0]), 0x01)
+        self.assertEqual(self.inst.get_bytes([1, 1, 0, 0, 0, 0, 0, 0]), 0x03)
+
+    def test_get_bytes_inverse_msb_first(self):
+        self.inst._inverse_convention = True
+        self.assertEqual(self.inst.get_bytes([1, 0, 0, 0, 0, 0, 0, 0]), 0x80)
+        self.assertEqual(self.inst.get_bytes([1, 1, 0, 0, 0, 0, 0, 0]), 0xC0)
+
+    def test_ts_from_bits_direct_inverse_and_garbage(self):
+        self.assertEqual(
+            self.pd.ts_from_bits([0, 1, 1, 0, 1, 1, 1, 0, 0, 1]), 0x3b)
+        self.assertEqual(
+            self.pd.ts_from_bits([0, 1, 1, 0, 0, 0, 0, 0, 0, 1]), 0x3f)
+        self.assertIsNone(
+            self.pd.ts_from_bits([0, 1, 1, 0, 1, 0, 1, 0, 0, 1]))
+        self.assertIsNone(self.pd.ts_from_bits([0, 1, 1, 0]))
+
+    def test_wait_data_falling_uses_high_idle_and_falling_start(self):
+        self.inst._inverse_convention = True
+        self.inst.bit_samples = 100
+        self.inst._edge_read = True
+        self.inst._min_pulse_samples = 0
+        self.inst.samplenum = 0
+        conds = []
+
+        def wait(cond):
+            conds.append(cond)
+            self.inst.samplenum += 200
+            return [1] * 8 if len(conds) == 1 else [0] * 8
+
+        self.inst.wait = wait
+        self.inst.wait_data_falling()
+        self.assertFalse(self.inst._eof)
+        self.assertEqual(conds[0][0][self.pd.Decoder.DATA_IDX], 'h')
+        self.assertEqual(conds[1][0][self.pd.Decoder.DATA_IDX], 'f')
+        self.assertEqual(self.inst._start_fall, self.inst.samplenum)
+
+
 class TestValidateT0Apdu(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -393,6 +526,7 @@ class TestAtrHuntEscape(unittest.TestCase):
         self.pd = pd
         self.inst = object.__new__(pd.Decoder)
         self.inst.bit_samples = None
+        self.inst._etu_measured = False
         self.inst._atr_hunt_count = 0
         self.inst._atr_fail_total = 0
         self.inst._hunt_etu_attempts = 0
@@ -413,6 +547,22 @@ class TestAtrHuntEscape(unittest.TestCase):
         self.assertEqual(self._hunt_round(0x00), 'retry')
         self.assertEqual(self._hunt_round(0x00), 'recover')
         self.assertEqual(self.inst._hunt_etu_attempts, 1)
+
+    def test_seeded_bit_samples_does_not_block_recovery(self):
+        # handle_atr pre-seeds bit_samples with the default-rate guess; the
+        # recovery must key off a real DATA measurement, not on bit_samples
+        # being None (the pre-seed used to defeat the v1.6.0 recovery).
+        self.inst.bit_samples = 1488
+        self.inst._etu_measured = False
+        self.assertEqual(self._hunt_round(0x00), 'retry')
+        self.assertEqual(self._hunt_round(0x00), 'recover')
+
+    def test_measured_etu_skips_recovery(self):
+        # A real measurement means the rate is known: no re-measurement.
+        self.inst.bit_samples = 1488
+        self.inst._etu_measured = True
+        actions = [self._hunt_round(0x00) for _ in range(6)]
+        self.assertNotIn('recover', actions)
 
     def test_recovery_attempts_capped_then_hard_limit(self):
         actions = [self._hunt_round(0x00) for _ in range(200)]
@@ -452,6 +602,7 @@ class TestAtrHuntEscape(unittest.TestCase):
 
     def test_no_recovery_when_etu_known(self):
         self.inst.bit_samples = 100
+        self.inst._etu_measured = True
         for _ in range(6):
             self.assertEqual(self._hunt_round(0x00), 'retry')
         self.assertEqual(self.inst._hunt_etu_attempts, 0)
@@ -870,6 +1021,53 @@ class TestDecodeStep(unittest.TestCase):
         self.assertEqual(inst.emitted,
                          [(bytes.fromhex('00a40004009000'), 0)])
 
+    def test_data_0x3b_is_not_an_atr_after_traffic(self):
+        # Once an APDU has been emitted, a DATA-state 0x3B is data misread
+        # at a frame boundary, not an ATR: it falls through to the
+        # suspicious-CLA discard instead of calling handle_atr.
+        inst = self._make(bytes.fromhex('3b80900000'))
+        inst._atr_parsed = False
+        inst._apdu_seen = True
+        called = []
+        inst.handle_atr = lambda pins: called.append(pins)
+        inst.decode_step()
+        self.assertEqual(called, [])
+        self.assertEqual(len(inst.discarded), 1)
+        self.assertEqual(inst.discarded[0][0], 0x3B)
+
+    def test_data_0x3b_before_traffic_is_atr_candidate(self):
+        # Before any APDU the byte is still a legitimate ATR candidate
+        # (a capture starting between RST deassert and the ATR).
+        inst = self._make(bytes.fromhex('3b80900000'))
+        inst._atr_parsed = False
+        inst._apdu_seen = False
+        called = []
+        inst.handle_atr = lambda pins: called.append(pins)
+        inst.decode_step()
+        self.assertEqual(len(called), 1)
+
+    def test_data_0x3f_before_traffic_is_atr_candidate(self):
+        # Inverse-convention ATRs (TS=0x3F) are candidates too.
+        inst = self._make(bytes.fromhex('3f100000'))
+        inst._atr_parsed = False
+        inst._apdu_seen = False
+        called = []
+        inst.handle_atr = lambda pins: called.append(pins)
+        inst.decode_step()
+        self.assertEqual(len(called), 1)
+
+    def test_inverse_ts_raw_pattern_is_an_atr_candidate(self):
+        # A real inverse TS decodes as 0x03 through the direct reader; the
+        # raw moments 5-7 (LLL) mark it as the 0x3F candidate.
+        inst = self._make(bytes.fromhex('03100000'))
+        inst._atr_parsed = False
+        inst._apdu_seen = False
+        inst.bits = [0, 1, 1, 0, 0, 0, 0, 0, 0, 1]
+        called = []
+        inst.handle_atr = lambda pins: called.append(pins)
+        inst.decode_step()
+        self.assertEqual(len(called), 1)
+
     def test_idle_noise_still_discarded(self):
         # 0xFE (all-1s minus one bit) is not a valid class: unchanged
         # idle-noise discard.
@@ -944,6 +1142,12 @@ class TestAtrHuntDetect(unittest.TestCase):
         inst._samples_per_clock = 4.0     # skip _measure_clock_period()
         inst.bit_samples = 100            # skip _compute_bit_samples()
         inst.out_ann = 0
+        inst.out_python = 0
+        inst.options = {'protocol': 'T=0'}
+        inst._atr_parsed = False
+        inst.emitted = []
+        inst.emit_packet = lambda st, pl, ss, es, flags=0: \
+            inst.emitted.append((st, bytes(pl), flags))
         inst.hasT0 = False                # start() defaults; a handoff flips it
         inst.hasT1 = False
         inst._bytes = collections.deque(byte_seq)
@@ -1007,6 +1211,46 @@ class TestAtrHuntDetect(unittest.TestCase):
         inst.handle_atr(None)             # must not raise
         self.assertEqual(inst.state, 'ATR')
         self.assertEqual(list(inst._replay), [])
+
+    def test_bare_ts_t0_is_not_committed_as_an_atr(self):
+        # A data byte 0x3B followed by 0x00 looks like a bare TS+T0 ATR.
+        # It must not be emitted or force clock_skip=372 (a mid-session
+        # data 0x3B used to fabricate an ATR).
+        inst = self._make([0x3B, 0x00])
+        inst.handle_atr(None)
+        self.assertFalse(inst._atr_parsed)
+        self.assertEqual(inst.emitted, [])
+        self.assertEqual(inst.state, 'DATA')
+
+    def test_inverse_ts_pattern_is_parsed(self):
+        # 0x03 + the raw inverse TS pattern must be committed as 0x3F and
+        # switch the readers to the inverse convention.
+        inst = self._make([0x03, 0x10, 0x95])
+        inst.bits = [0, 1, 1, 0, 0, 0, 0, 0, 0, 1]
+        inst.handle_atr(None)
+        self.assertTrue(inst._atr_parsed)
+        self.assertTrue(inst._inverse_convention)
+        self.assertEqual(inst.ATR, [0x3f, 0x10, 0x95])
+        self.assertEqual(len(inst.emitted), 1)
+
+    def test_atr_with_parity_error_is_ignored(self):
+        # A real ATR is parity-clean.  A data run that parses as an ATR but
+        # has a parity error must not commit the rate (e.g. test_8's
+        # fabricated 3b80900000).
+        inst = self._make([0x3B, 0x10, 0x95])
+        orig = inst.read_byte
+
+        def read():
+            b = orig()
+            if b == 0x10:
+                inst._parity_errors += 1
+            return b
+
+        inst.read_byte = read
+        inst.handle_atr(None)
+        self.assertFalse(inst._atr_parsed)
+        self.assertEqual(inst.emitted, [])
+        self.assertEqual(inst.state, 'DATA')
 
 
 if __name__ == '__main__':

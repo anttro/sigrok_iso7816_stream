@@ -56,6 +56,9 @@ this decoder's `pcap_file=<path>` option).
 | VCC tracking (optional) | `vcc_detect=true`: emits power on/off events (sub_type 0x11) |
 | Direct PCAP file | `pcap_file=<path>` writes PCAP without shell redirection |
 | Start-bit deglitch | 2-sample deglitch in the start-bit detector eliminates sub-ETU LOW glitches from FX2LP pull-up artifacts, preventing byte misalignment on fast phone traces |
+| Mid-session ETU lock | The DATA-edge ETU estimator rejects guard-only (all-zero) and single-spacing bursts and invalidates a rate that fails parity, so a capture at a non-default F/D locks safely |
+| ATR / resync guards | A DATA-state `0x3B`/`0x3F` is an ATR candidate only before the first APDU; parity-dirty or bare (TS+T0) frames are ignored, and `resync_idle` really waits for the idle level |
+| Inverse convention | TS=0x3F ATRs follow ISO 7816-3 7.1: inverted data, msb first, start bit still LOW from an idle-HIGH line |
 
 ## Decoder options
 

@@ -333,6 +333,63 @@ Known limitation: no on-disk fixture reproduces the exact live failure (all
 real captures contain a 372 ATR), so end-to-end proof needs a re-captured
 `.sr` from the failing phone; the unit tests cover the loop-escape logic.
 
+### v1.9.6: ETU lock validation, hunt recovery, resync + ATR acceptance
+
+The audit's P1 findings.  The validation helpers are unit-tested; the trace
+suite stays at the v1.9.5 metrics.
+
+- **ETU measurement validation (`_etu_candidate`).**  The mid-session
+  estimator used to lock the inter-character guard as the ETU on all-zero
+  data: a 0x00 run gives 10-ETU LOW runs plus a short HIGH guard, so the
+  smallest recurring spacing is the guard (2x-3x the true ETU), and a lone
+  0x00 character's single 10-ETU spacing is 10x.  A burst now needs at
+  least two usable spacings, and a burst whose minimum recurrence is a HIGH
+  guard with every other spacing >= 2x it is rejected -- the decoder waits
+  for a burst with bit transitions (this covers the 2-5 ETU guard range).
+  A failed measurement leaves `bit_samples` unset instead of committing the
+  old `clock_skip*3` guess.
+- **Invalidation.**  `_confirm_etu()` no longer counts a dropped frame (no
+  genuine start -> empty bits) as parity-OK, and a rejected measurement now
+  clears `bit_samples`, `_etu_measured` and `_clock_skip_confident` (the old
+  code kept sampling at the rejected rate).
+- **Hunt ETU recovery.**  `handle_atr()` pre-seeds `bit_samples` with the
+  default-rate guess while the recovery condition tested `bit_samples is
+  None`, so the v1.6.0 live-ETU recovery could never fire from the hunt.
+  The condition now keys off `_etu_measured` (a real DATA measurement); a
+  measured rate still suppresses the recovery.
+- **`resync_idle()`** now actually waits: it used `wait({'skip': 0})` in a
+  loop (the same sample 48 times -> a no-op).  It now waits on the DATA idle
+  level (plus RST/VCC edges, bounded) before the next peek.
+- **ATR acceptance.**  A DATA-state `0x3B`/`0x3F` is an ATR candidate only
+  before any APDU has been emitted (`_apdu_seen`); a parsed ATR is rejected
+  when any of its bytes had a parity error or when it is a bare TS+T0
+  (`3B 00`).  A data run misread at a frame boundary used to be committed
+  as an ATR (a fabricated `3b80900000` appeared while developing this
+  change), forcing `clock_skip=372` for the rest of the capture.  Real
+  warm-reset ATRs are parity-clean and commit as before.
+- **Inverse convention (TS=0x3F).**  The readers assumed an idle-LOW line
+  and a rising start bit; ISO 7816-3 7.1 keeps the line idle HIGH and the
+  start bit LOW in both conventions -- only the data polarity and order
+  change.  `wait_data_falling`/`resync_idle` now use the HIGH idle for
+  inverse too, `get_bytes()` assembles the inverse data msb-first, and the
+  DATA state accepts `0x3F` alongside `0x3B`.  The data readers already
+  inverted the bit polarity.  A real inverse TS decodes as `0x03` through
+  the direct reader, so `ts_from_bits()` matches the raw ISO 7816-3 8.1
+  pattern (moments 1-4 LHHL, 5-7 LLL/HHH, 8-10 LLH) in both the hunt and
+  the DATA state instead of trusting the decoded byte.  The readers exempt
+  a matching TS from the parity check: its moment 10 is fixed by the
+  pattern, and the inverse TS is legitimately odd over moments 2-10, so it
+  must not log a CHKSUM or reject the ATR.  No inverse-convention capture
+  exists in the corpus, so this is spec-verified, not trace-verified.
+
+Validation: 117/117 unit tests (18 new: the ETU candidate vectors, the
+hunt-recovery seeded/measured cases, the resync level wait, the bare-ATR
+and parity-ATR guards, the `_apdu_seen` gate both ways, the inverse
+bit-order/start-edge/TS-pattern vectors); the 10-trace suite is unchanged
+from v1.9.5 (identical APDU/CHKSUM/CONCAT/BAD_FCS counts, `RESULT: OK`
+everywhere);
+`compare_baseline.sh` reports IDENTICAL.  VERSION -> 1.9.6.
+
 ### v1.9.5: T=0 framing — immediate SW, short responses, Le=256
 
 The audit's P0 framing fixes, each pinned by a `TestDecodeStep` vector:
@@ -914,7 +971,7 @@ append the measured CLK frequency when known
 
 ### Versioning
 
-The decoder version is defined in `pd.py` as `VERSION = '1.9.5'`.
+The decoder version is defined in `pd.py` as `VERSION = '1.9.6'`.
 The version is printed to the log on decoder startup.
 
 ### Testing after decoder changes
@@ -1165,13 +1222,17 @@ discarded ideas.  "Proven" = kept in `pd.py`; "Rejected" = do not re-add.
   native skip becomes F/D CLK cycles/bit.  Reliable (verified live).
 - **T=1 block-chain follow-up bound.** Caps chained I-blocks so garbage
   cannot loop forever.  Reliable.
-- **Synthetic T=0 ATR fallback `[0x3B, 0x00]`.** After 8 failed ATR hunts,
-  commit a minimal ATR and set `hasT0=True`.  Reliable for mid-session starts
-  (no ATR in the trace).
+- **Hunt give-up (no synthetic ATR).** After `ATR_HUNT_FAIL_LIMIT` failed
+  hunts the decoder resumes DATA without fabricating an ATR (v1.6.0 removed
+  the old `[0x3B, 0x00]` fallback); the mid-session ETU estimator then
+  recovers the rate from DATA.  Reliable.
 - **ETU auto-detect from DATA via edge counting (`_measure_etu`).** Edge-waits
   to the first DATA start-bit fall, measures ETU from DATA-edge spacing, locks
   it **once**.  Reliable for gated/stopped CLK (phone, ~53 samples).  Locking
-  once (not re-measuring) is drift-immune and avoids glitch re-anchors.
+  once (not re-measuring) is drift-immune and avoids glitch re-anchors.  A
+  burst must yield >=2 usable spacings, and a guard-dominated burst (all-zero
+  data: long LOW runs + short HIGH guard) is rejected (`_etu_candidate`,
+  v1.9.6); a rate that fails parity is invalidated and re-measured.
 - **Edge-list bit reader (`_read_byte_edges`).** Per-byte edge reconstruction
   from the DATA edge list (re-anchors the next byte via `_next_start_fall`).
   Drift-immune.  Reliable for mid-session/edge mode; gated by `_edge_read`.
@@ -1189,10 +1250,10 @@ discarded ideas.  "Proven" = kept in `pd.py`; "Rejected" = do not re-add.
   bit_samples` distinguishes genuine inter-byte idle gaps (≥2 ETU per ISO
   7816-3) from intra-byte HIGH periods (≤1 ETU).  Prevents byte misalignment
   after `_measure_etu()` consumption (v1.1.1 fix for post-ATR desync).
-- **Inverse-convention ATR detection in DATA state.** `firstByte == 0x3f`
-  alongside `0x3b` at line 1656, so inverse-convention ATRs (TS=0x3F) are
-  parsed by the default state.  Sets `clock_skip=372` correctly
-  before PPS (v1.1.1 fix).
+- **Inverse-convention support (TS=0x3F, v1.9.6).**  The hunt already read
+  `0x3F`; the DATA state now accepts it too, the start bit stays a falling
+  edge from an idle-HIGH line (ISO 7816-3 7.1), and `get_bytes()` assembles
+  inverse data msb-first.  Spec-verified; no inverse capture in the corpus.
 - **`_resync = True` after PPS acceptance (native CLK path).** Forces
   `resync_idle()` before the first post-PPS command, preventing the decoder
   from latching onto a mid-byte transition at the new speed (v1.1.1 fix).

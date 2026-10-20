@@ -28,7 +28,7 @@ from .gsmtap_stream import (GsmtapStreamSender,
     GSMTAP_SIM_RST_EVENT, GSMTAP_SIM_VCC_EVENT,
     GSMTAP_FLAG_BAD_FCS)
 
-VERSION = '1.9.5'
+VERSION = '1.9.6'
 
 
 
@@ -194,6 +194,26 @@ def plausible_ins(ins):
     if (ins & 0x01) != 0 and ins not in ODD_INS:
         return False
     return True
+
+
+def ts_from_bits(bits):
+    '''Return the TS value (0x3B direct / 0x3F inverse) when the raw ten
+    character bits match an ISO 7816-3 8.1 initial-character pattern, else
+    None.
+
+    Both TS patterns share moments 1-4 LHHL and 8-10 LLH; moments 5-7 are
+    LLL (inverse: state L encodes 1, msb first) or HHH (direct: state H
+    encodes 1, lsb first).  The decoded byte alone cannot tell them apart:
+    the inverse TS reads as 0x03 through a direct lsb-first assembly.'''
+    if len(bits) < 10:
+        return None
+    if bits[0:4] != [0, 1, 1, 0] or bits[7:10] != [0, 0, 1]:
+        return None
+    if not any(bits[4:7]):
+        return 0x3f
+    if all(bits[4:7]):
+        return 0x3b
+    return None
 
 
 def is_idle_noise_byte(first_byte):
@@ -533,6 +553,11 @@ class Decoder(srd.Decoder):
         # handling -- native mode never measures it explicitly.
         self.detected_clock_skip = 372
         self.bit_samples = None
+        # True only when bit_samples came from a real DATA-edge
+        # measurement (not a protocol/fallback guess).  The hunt-side ETU
+        # recovery and the clock_skip commit key off this, so a pre-seeded
+        # default cannot mask a failed measurement.
+        self._etu_measured = False
         self._etu_confirm_count = 0
         self._etu_fail_count = 0
         self._edge_spacings = deque(maxlen=128)
@@ -566,6 +591,11 @@ class Decoder(srd.Decoder):
         # (e.g. GSM TX bursts coupling into the probe wiring).
         self.parity_hist = deque(maxlen=64)
         self.sig_warned = False
+        # Total parity failures (ATR validation) and "APDU traffic has
+        # started" (a DATA-state 0x3B is only an ATR before the first APDU;
+        # afterwards it is data misread at a frame boundary).
+        self._parity_errors = 0
+        self._apdu_seen = False
         # Stuck-line watchdog: consecutive all-zero frames usually mean
         # the I/O probe lost contact (floating low), not data.
         self.zero_run = 0
@@ -819,6 +849,8 @@ class Decoder(srd.Decoder):
                     self._inverse_convention = False
                     self.clock_skip = 372
                     self.bit_samples = None
+                    self._etu_measured = False
+                    self._apdu_seen = False
                     self.state = 'FIND START'
                     self._atr_hunt_count = 0
                     self._pps_attempted = False
@@ -852,6 +884,7 @@ class Decoder(srd.Decoder):
                             self._atr_hunt_count = 0
                             self._pps_attempted = False
                             self.bit_samples = None
+                            self._etu_measured = False
                             self._etu_confirm_count = 0
                             self._etu_fail_count = 0
                             self.clock_skip = 372
@@ -887,8 +920,16 @@ class Decoder(srd.Decoder):
         return h
 
     def get_bytes(self, bits):
+        bits = list(bits)
+        if self._inverse_convention:
+            # ISO 7816-3 7.1: direct sends the lsb first, inverse the msb
+            # first; the readers have already applied the polarity.
+            byte = 0
+            for bit in bits:
+                byte = (byte << 1) | bit
+            return byte
         byte = 0
-        for bit in list(reversed(bits)):
+        for bit in reversed(bits):
             byte = (byte << 1) | bit
         return byte
     
@@ -911,6 +952,8 @@ class Decoder(srd.Decoder):
         monitor; warn once per degradation episode when >= 8 of the last
         64 frames failed parity.'''
         self.parity_hist.append(err)
+        if err:
+            self._parity_errors += 1
         if len(self.parity_hist) < 32:
             return
         errs = sum(self.parity_hist)
@@ -993,12 +1036,14 @@ class Decoder(srd.Decoder):
 
         For a mid-session capture (no ATR) the card may already be PPS'd to a
         fast ETU, so the default clock_skip=372 is wrong.  Once _measure_etu
-        has recovered bit_samples (samples per ETU) and _measure_clock_period
-        has recovered _samples_per_clock (samples per CLK cycle), clock_skip
-        = bit_samples / _samples_per_clock.  Sets _clock_skip_confident on
-        success so the CLK-sync reader is used; leaves it clear (edge-list
-        fallback) if the CLK period could not be measured.'''
-        if self._samples_per_clock and self.bit_samples:
+        has recovered bit_samples (samples per ETU) from real DATA edges and
+        _measure_clock_period has recovered _samples_per_clock (samples per
+        CLK cycle), clock_skip = bit_samples / _samples_per_clock.  Only a
+        real DATA measurement is trusted (_etu_measured); a failed or
+        rejected measurement never commits a rate.  A later parity failure
+        invalidates it (_confirm_etu).'''
+        if (self._etu_measured and self._samples_per_clock
+                and self.bit_samples):
             cs = int(round(float(self.bit_samples) / float(self._samples_per_clock)))
             if cs >= 1:
                 if cs != self.clock_skip:
@@ -1009,6 +1054,38 @@ class Decoder(srd.Decoder):
                 self._clock_skip_confident = True
                 return True
         return False
+
+    def _etu_candidate(self, pairs):
+        '''Return (etu, ok) from (spacing, level) edge pairs.
+
+        Filters glitches, drops a leading burst-boundary outlier, and
+        rejects a burst whose minimum recurrence is the inter-character
+        guard rather than a bit period: all-zero data produces long LOW
+        runs and a short HIGH guard, so the smallest recurring spacing is
+        the guard (2x or more the true ETU).  A burst with bit transitions
+        has a smaller spacing somewhere, so the guard pattern is
+        distinguishable when every non-minimum spacing is at least 2x the
+        minimum.'''
+        MIN_ETU = 12
+        valid = [p for p in pairs if p[0] >= MIN_ETU]
+        if len(valid) >= 2:
+            med = sorted(p[0] for p in valid)[len(valid) // 2]
+            # If the first valid spacing is >10x the median, the scan
+            # started at a burst boundary — drop leading outliers.
+            while valid and valid[0][0] > med * 10:
+                valid.pop(0)
+        if len(valid) < 2:
+            # A single spacing cannot prove a recurring bit period (a lone
+            # 0x00 character yields one 10-ETU run -> 10x the true ETU).
+            return (None, False)
+        spacings = [p[0] for p in valid]
+        etu = self._robust_min(spacings)
+        guard_dominated = (
+            all(lvl == 1 for sp, lvl in valid if sp == etu)
+            and all(sp >= 2 * etu for sp, lvl in valid if sp != etu))
+        if guard_dominated or not (4 <= etu <= 100000):
+            return (etu, False)
+        return (etu, True)
 
     def _measure_etu(self):
         '''Recover the live bit period (ETU, in samples) from the DATA line for
@@ -1056,35 +1133,24 @@ class Decoder(srd.Decoder):
                 break
             edges.append((sn, d))
         if len(edges) >= 2:
-            spacings = [edges[i + 1][0] - edges[i][0]
-                        for i in range(len(edges) - 1)]
-            # Filter glitches (< MIN_ETU) then check if the first spacing
-            # is an outlier (scan started in a noisy pre-burst region).
-            MIN_ETU = 12
-            valid = [s for s in spacings if s >= MIN_ETU]
-            if len(valid) >= 2:
-                med = sorted(valid)[len(valid) // 2]
-                # If the first valid spacing is >10x the median, the scan
-                # started at a burst boundary — drop leading outliers.
-                while valid and valid[0] > med * 10:
-                    valid.pop(0)
-            spacings = valid if valid else spacings
-            etu = self._robust_min(spacings)
-            # Sanity clamp: a real ISO 7816 etu is >= a few samples and below
-            # ~100k samples even at extreme F/D.  Anything else is a glitch.
-            if 4 <= etu <= 100000:
+            pairs = [(edges[i + 1][0] - edges[i][0], edges[i][1])
+                     for i in range(len(edges) - 1)]
+            etu, ok = self._etu_candidate(pairs)
+            if ok:
                 self.bit_samples = etu
+                self._etu_measured = True
                 self._etu_confirm_count = 0
                 self._etu_fail_count = 0
-        if self.bit_samples is None:
-            self.bit_samples = self._compute_bit_samples()
-            self._etu_confirm_count = 0
-            self._etu_fail_count = 0
+            else:
+                self.log("ETU measurement rejected", etu,
+                         "spacings", [p[0] for p in pairs][:8])
         # The live line is gated/stopped CLK; use the edge-list bit reader
-        # (immune to the drift a fixed sample-skip cadence would suffer) for
-        # every byte from here on.
+        # (immune to the drift of fixed sample-skip timing) for every byte.
+        # The CLK-sync reader is used once _derive_clock_skip_from_etu()
+        # has a real measurement; a parity failure invalidates it.
         self._edge_read = True
-        self.log("etu recovered (samples):", self.bit_samples)
+        if self._etu_measured:
+            self.log("etu recovered (samples):", self.bit_samples)
 
     def _recover_etu_in_hunt(self):
         '''Recover the live bit period from the DATA line while still in the
@@ -1122,7 +1188,10 @@ class Decoder(srd.Decoder):
         so it is unit-testable without libsigrokdecode.'''
         self._atr_fail_total += 1
         # Live-ETU recovery every 2 failures, up to ATR_HUNT_ETU_ATTEMPTS.
-        if (self.bit_samples is None
+        # A real DATA measurement is required: bit_samples may be a
+        # pre-seeded default from handle_atr, which must not mask the need
+        # to recover the live rate.
+        if (not self._etu_measured
                 and self._hunt_etu_attempts < ATR_HUNT_ETU_ATTEMPTS
                 and self._atr_fail_total >=
                     2 * (self._hunt_etu_attempts + 1)):
@@ -1149,12 +1218,19 @@ class Decoder(srd.Decoder):
             self._etu_confirm_count += 1
             if self._etu_confirm_count >= 3:
                 self.log("ETU confirmed:", self.bit_samples)
+                if self._etu_measured:
+                    # The CLK-sync reader may trust clock_skip now.
+                    self._clock_skip_confident = True
         else:
             self._etu_fail_count += 1
             if self._etu_fail_count >= 2:
                 self.log("ETU re-measure (bad initial measurement):",
                          self.bit_samples)
                 self.bit_samples = None
+                self._etu_measured = False
+                # Never keep sampling at a rejected rate: drop back to the
+                # edge reader until a fresh measurement is confirmed.
+                self._clock_skip_confident = False
                 self._etu_confirm_count = 0
                 self._etu_fail_count = 0
 
@@ -1349,13 +1425,17 @@ class Decoder(srd.Decoder):
                 bit = 1 - bit
             self.bits.append(bit)
         self.es = self.samplenum
-        self.signal_quality(1 if (self.bits.count(1) % 2 != 0) else 0)
-        parity_ok = (self.bits.count(1) % 2 == 0)
-        if (self.bits.count(1) % 2 != 0):
+        # A TS's moment 10 is fixed by the ISO 7816-3 8.1 pattern (the
+        # inverse TS is odd over moments 2-10); it is not a parity-checked
+        # data character, so it must neither warn nor feed the ETU check.
+        is_ts = ts_from_bits(self.bits) is not None
+        parity_ok = is_ts or (self.bits.count(1) % 2 == 0)
+        self.signal_quality(0 if parity_ok else 1)
+        if not parity_ok:
             self.log(self.samplenum, "CHKSUM ERROR: ", 0, "bits: ", self.bits)
             self.put(self.ss, self.samplenum, self.out_ann,
                      [0, ["CHKSUM ERROR bits={bits}".format(bits=self.bits)]])
-        if self.bit_samples is not None:
+        if self.bit_samples is not None and self.bits:
             self._confirm_etu(parity_ok)
         byte = self.get_bytes(self.bits[1:9])
         # Stuck-line watchdog (same as the other readers).
@@ -1462,9 +1542,11 @@ class Decoder(srd.Decoder):
         if nxt is not None:
             self._start_fall = nxt
         self.es = self.samplenum
-        self.signal_quality(1 if (self.bits.count(1) % 2 != 0) else 0)
-        parity_ok = (self.bits.count(1) % 2 == 0)
-        if (self.bits.count(1) % 2 != 0):
+        # A TS is not a parity-checked data character (see _read_byte_edges).
+        is_ts = ts_from_bits(self.bits) is not None
+        parity_ok = is_ts or (self.bits.count(1) % 2 == 0)
+        self.signal_quality(0 if parity_ok else 1)
+        if not parity_ok:
             self.log(self.samplenum, "CHKSUM ERROR: ", 0, "bits: ", self.bits)
             self.put(self.ss, self.samplenum, self.out_ann,
                      [0, ["CHKSUM ERROR bits={bits}".format(bits=self.bits)]])
@@ -1511,14 +1593,11 @@ class Decoder(srd.Decoder):
                 min_high = max(int(1.5 * self.bit_samples), 4)
         while True:
             # Wait for DATA idle, servicing RST/VCC.
-            # In direct convention: idle = HIGH, start bit = falling edge (HIGH→LOW).
-            # In inverse convention: idle = LOW, start bit = rising edge (LOW→HIGH).
-            if self._inverse_convention:
-                idle_cond = {self.DATA_IDX: 'l'}  # Wait for LOW (idle in inverse)
-                start_edge = 'r'  # Rising edge = start bit in inverse
-            else:
-                idle_cond = {self.DATA_IDX: 'h'}  # Wait for HIGH (idle in direct)
-                start_edge = 'f'  # Falling edge = start bit in direct
+            # ISO 7816-3 7.1: the line idles HIGH and the start bit is
+            # always LOW (falling edge) in BOTH conventions; only the
+            # data-bit polarity and order differ.
+            idle_cond = {self.DATA_IDX: 'h'}
+            start_edge = 'f'
             cond = [idle_cond]
             if (self.track_rst):
                 cond.append({self.RST_IDX: 'e'})
@@ -1555,7 +1634,7 @@ class Decoder(srd.Decoder):
                 pins = self.wait({'skip': self._min_pulse_samples})
                 if pins is not None:
                     bit = pins[self.DATA_IDX]
-                    idle_val = 1 if not self._inverse_convention else 0
+                    idle_val = 1  # line HIGH is idle in both conventions
                     if bit == idle_val:
                         self._glitch_rejects += 1
                         self.log("start-bit glitch rejected (#%d)"
@@ -1639,8 +1718,10 @@ class Decoder(srd.Decoder):
                 self.bits.append(bit)
                 self.wait({'skip': self.clock_skip - 4})
             self.es = self.samplenum
-            self.signal_quality(1 if (self.bits.count(1) % 2 != 0) else 0)
-            if (self.bits.count(1) % 2 != 0):
+            is_ts = ts_from_bits(self.bits) is not None
+            bad_parity = (not is_ts) and (self.bits.count(1) % 2 != 0)
+            self.signal_quality(1 if bad_parity else 0)
+            if bad_parity:
                 self.log(self.samplenum, "CHKSUM ERROR: ", pins[1], "bits: ", self.bits)
                 self.put(self.ss, self.samplenum, self.out_ann, [0, ["CHKSUM ERROR bits={bits}".format(bits=self.bits)]])
             byte = self.get_bytes(self.bits[1:9])
@@ -1688,29 +1769,37 @@ class Decoder(srd.Decoder):
 
 
     def resync_idle(self):
-        '''Re-align framing after a desync: wait for DATA to go to idle level
-        so the next peek lands on a genuine start bit of a fresh exchange
-        instead of a mid-burst byte.  Gating-immune: we poll DATA in
-        samples (which advance even when CLK is frozen), and bound the hunt
-        by a sample budget so a pathologically-busy (or stuck) line never
-        stalls the decoder.'''
+        '''Re-align framing after a desync: wait for DATA to return to its
+        idle level so the next peek lands on a genuine start bit of a fresh
+        exchange instead of a mid-burst byte.  The wait is a level condition
+        (plus optional RST/VCC edges), so it advances the sample counter
+        instead of spinning on the current sample; a bounded loop guards
+        against a pathologically busy or stuck line.'''
         bs = self.bit_samples or self._compute_bit_samples()
         budget = int(IDLE_RESYNC_ETU * bs) * 8
         step = max(int(bs), 1)
         loops = budget // step + 16
-        # In direct convention: idle = HIGH (mark).
-        # In inverse convention: idle = LOW (mark is inverted).
-        idle_level = 0 if self._inverse_convention else 1
+        # ISO 7816-3 7.1: the line idles HIGH in both conventions.
+        idle_level = 1
+        cond = [{self.DATA_IDX: 'h' if idle_level else 'l'}]
+        if self.track_rst:
+            cond.append({self.RST_IDX: 'e'})
+        if self.track_vcc:
+            cond.append({self.VCC_IDX: 'e'})
         for _ in range(loops):
-            pins = self.wait({'skip': 0})
+            pins = self.wait(cond)
             if pins is None:
                 # End of capture / session stopped mid-resync: stop cleanly
                 # instead of raising TypeError on the None pin state.
                 self._eof = True
                 return
-            if pins[self.DATA_IDX] == idle_level:
+            if self._stall_check(pins, track=False):
+                self._eof = True
                 return
-        # Could not find an idle gap -- resume normal decode anyway.
+            if self.line_events(pins):
+                continue
+            return
+        # Could not find an idle level -- resume normal decode anyway.
 
     def handle_atr(self, pins):
         
@@ -1718,6 +1807,7 @@ class Decoder(srd.Decoder):
 
         self.log("START ATR:", self.samplenum);
         self.state = 'ATR'
+        bad_parity_before = self._parity_errors
         
         tA = []
         tB = []
@@ -1744,6 +1834,12 @@ class Decoder(srd.Decoder):
         else:
             byte = self.read_first_byte()
             atr_start = self.ss
+        # ISO 7816-3 8.1: an inverse-convention TS (moments 5-7 = LLL) is
+        # decoded as 0x03 by the direct reader; take the convention from
+        # the raw pattern so both TS forms are recognised.
+        raw_ts = ts_from_bits(self.bits)
+        if raw_ts is not None:
+            byte = raw_ts
         # TS must be 0x3B (direct) or 0x3F (inverse) per TS 102 221 §5.2.2.
         # Pre-activation traffic (reader card-detect polling, a stray PPS
         # `ff 10 95 7a`, power-up noise) can appear on DATA before RST even
@@ -1784,6 +1880,9 @@ class Decoder(srd.Decoder):
                 # End of capture mid-hunt: stop cleanly instead of raising
                 # TypeError (None & 0x80) in the next loop iteration.
                 return
+            raw_ts = ts_from_bits(self.bits)
+            if raw_ts is not None:
+                byte = raw_ts
             atr_start = self.ss
             ts_attempts += 1
         if (byte not in (0x3b, 0x3f)):
@@ -1820,6 +1919,7 @@ class Decoder(srd.Decoder):
                          count=self._atr_hunt_count,
                          fails=self._atr_fail_total))
             self.bit_samples = None
+            self._etu_measured = False
             self._etu_confirm_count = 0
             self._etu_fail_count = 0
             self.hasT0 = True
@@ -1911,6 +2011,24 @@ class Decoder(srd.Decoder):
                 self.put(atr_start, self.samplenum, self.out_ann, [0, ["Invalid TCK in ATR, got={tck:02x} expected={xor:02x}".format(tck=byte,xor=xor)]])
                 self.log("Invalid TCK in ATR", hex(byte), hex(xor))    
 
+        if self._parity_errors != bad_parity_before:
+            # A real ATR is parity-clean; a data run misread at a frame
+            # boundary is not.  Ignore the ATR instead of committing 372.
+            self.log("ATR rejected: parity error(s) in",
+                     codecs.encode(bytes(self.ATR), 'hex'))
+            self.state = 'DATA'
+            self._resync = True
+            return
+        if len(self.ATR) < 2 or (len(self.ATR) < 3
+                                 and (self.ATR[1] & 0xF0) == 0):
+            # A bare TS+T0 ATR is legal ISO but not credible for a SIM/UICC:
+            # a 0x3B data byte at a frame boundary would otherwise fabricate
+            # an ATR and force clock_skip=372 for the rest of the capture.
+            self.log("implausible bare ATR ignored:",
+                     codecs.encode(bytes(self.ATR), 'hex'))
+            self.state = 'DATA'
+            self._resync = True
+            return
         self.put(atr_start, self.samplenum, self.out_ann, [2, ["ATR", "ATR={atr}".format(atr=codecs.encode(bytes(self.ATR), 'hex'))]])
         self.put(atr_start, self.samplenum, self.out_python, [0, self.ATR])
         self.emit_packet(GSMTAP_SIM_ATR, bytes(self.ATR), atr_start, self.samplenum)
@@ -1931,6 +2049,7 @@ class Decoder(srd.Decoder):
         # cleared bit_samples during ATR hunt (parity failures on noise),
         # which would trigger _measure_etu() on the next decode_step.
         self.bit_samples = self.clock_skip * (self._samples_per_clock or 3)
+        self._etu_measured = True
         # Lock the ETU so _confirm_etu() cannot clear bit_samples after
         # parity failures on post-ATR noise bytes.  Without this, two
         # consecutive parity errors would trigger an ETU re-measure that
@@ -2143,6 +2262,7 @@ class Decoder(srd.Decoder):
             else:
                 self._pps_speed_changed = True
                 self.bit_samples = None
+                self._etu_measured = False
                 self._start_fall = None
             # clock_skip now reflects the negotiated FI/DI, so it is known to
             # be correct regardless of which reader is active.
@@ -2282,6 +2402,7 @@ class Decoder(srd.Decoder):
             self._atr_hunt_count = 0
             self._pps_attempted = False
             self.bit_samples = None
+            self._etu_measured = False
             self._etu_confirm_count = 0
             self._etu_fail_count = 0
             self.clock_skip = 372
@@ -2364,7 +2485,9 @@ class Decoder(srd.Decoder):
                     self.read_byte()
                     self._resync = True
                 return True
-            elif (firstByte == 0x3b) and not self._atr_parsed: # Probably ATR (only if no ATR yet)
+            elif ((firstByte in (0x3b, 0x3f)
+                   or ts_from_bits(self.bits) is not None)
+                  and not self._atr_parsed and not self._apdu_seen): # ATR candidate (direct/inverse), only before traffic
                 self.handle_atr(self.wait({'skip': 0}))
                 return True
             elif is_idle_noise_byte(firstByte):
@@ -2746,6 +2869,9 @@ class Decoder(srd.Decoder):
 
 
             if (len(packet) > 0):
+                # APDU traffic has started: a later DATA-state 0x3B is
+                # data, not an ATR.
+                self._apdu_seen = True
                 # All-zero first: an I/O-held-low stretch is idle noise,
                 # not a TPDU -- suppress it entirely (and re-sync later).
                 if (all(b == 0 for b in packet)):
