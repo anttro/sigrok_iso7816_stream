@@ -1,5 +1,7 @@
 # sigrok_iso7816_stream
 
+📢 Project news and updates: [Telegram channel](https://t.me/youeyeseesee)
+
 Fork of [svenso/sigrok_iso7816](https://github.com/svenso/sigrok_iso7816) with
 **live GSMTAP UDP streaming**, making a cheap FX2 logic analyzer (Saleae clone)
 behave like a SIMtrace2 sniffer:
