@@ -2,7 +2,7 @@
 
 # sigrok_iso7816_stream
 
-📢 Новости и обновления проекта: [Telegram-канал](https://t.me/youeyeseesee)
+📢 Новости и обновления проекта: [Сайт](https://atroshin.ru) · [Telegram-канал](https://t.me/youeyeseesee)
 
 Форк [svenso/sigrok_iso7816](https://github.com/svenso/sigrok_iso7816) с
 **живым GSMTAP-UDP-стримингом**: дешёвый логический анализатор FX2 (клон
