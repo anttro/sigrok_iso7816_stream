@@ -8,12 +8,7 @@ Fork of [svenso/sigrok_iso7816](https://github.com/svenso/sigrok_iso7816) with
 **live GSMTAP UDP streaming**, making a cheap FX2 logic analyzer (Saleae clone)
 behave like a SIMtrace2 sniffer:
 
-```
-SIM card ⇄ reader (passive tap on the contacts)
-    → FX2 logic analyzer (fx2lafw, 8ch, 24MHz max)
-    → sigrok-cli + iso7816 decoder
-    → GSMTAP UDP :4729  →  [SIMtrace Analyser](https://github.com/anttro/simtrace-analyser) / Wireshark
-```
+![Signal path: SIM card and reader with a passive tap on the contacts, FX2 logic analyzer (fx2lafw, 8 channels, up to 24 MHz), sigrok-cli with the iso7816 decoder, GSMTAP UDP :4729, SIMtrace Analyser and Wireshark](resources/diagram_en.svg)
 
 [SIMtrace Analyser](https://github.com/anttro/simtrace-analyser) is the
 recommended tool for visualising live traces and viewing saved captures —

@@ -1033,11 +1033,13 @@ pathspec, and also compared exactly against both archive listings (missing
 *and* unexpected entries fail): the decoder (`__init__.py`, `pd.py`,
 `gsmtap_stream.py`), the scripts (`setup.sh`/`start.sh`,
 `setup.bat`/`start.bat`), `tools/vs_reader.py`, `README.md`, `README_RUS.md`,
-`LICENSE`, and every `resources/` image referenced from `README.md`.  Tests,
-`AGENTS.md`, the CI config, the development tools and the unreferenced
-`resources/` images never enter the release.  No `export-ignore` rules are
-used, so GitHub's own source archives still contain the full tree.  `dist/`
-is gitignored.
+`LICENSE`, every `resources/` photo referenced from both READMEs, and the two
+language variants of the pipeline diagram (`resources/diagram_en.svg`,
+`resources/diagram_ru.svg`, added explicitly because each README embeds its
+own).  Tests, `AGENTS.md`, the CI config, the development tools and the
+unreferenced `resources/` images never enter the release.  No `export-ignore`
+rules are used, so GitHub's own source archives still contain the full tree.
+`dist/` is gitignored.
 
 Both archives are unpacked and verified: `pd.py` VERSION, `py_compile` of the
 three modules, `bash -n` of the shell scripts, the tar exec bits, CRLF on the

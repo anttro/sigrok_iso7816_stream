@@ -38,13 +38,23 @@ trap 'rm -rf "$STAGE"' EXIT
 
 # --- expected release contents (allowlist) -------------------------------
 # The base runtime files plus every image referenced from the READMEs.
+# Each README embeds its own language variant of the pipeline diagram, so the
+# two diagrams are added explicitly instead of joining the shared-photo check.
+LANG_RES="resources/diagram_en.svg resources/diagram_ru.svg"
 README_RES="$(git show "$REF:README.md" \
-    | grep -oE '\]\(resources/[^)]+' | sed 's/](//' | LC_ALL=C sort -u || true)"
+    | grep -oE '\]\(resources/[^)]+' | sed 's/](//' \
+    | grep -v -e '^resources/diagram_en\.svg$' -e '^resources/diagram_ru\.svg$' \
+    | LC_ALL=C sort -u || true)"
 [ -n "$README_RES" ] || die "no resources/ images referenced from $REF:README.md"
 README_RUS_RES="$(git show "$REF:README_RUS.md" \
-    | grep -oE '\]\(resources/[^)]+' | sed 's/](//' | LC_ALL=C sort -u || true)"
+    | grep -oE '\]\(resources/[^)]+' | sed 's/](//' \
+    | grep -v -e '^resources/diagram_en\.svg$' -e '^resources/diagram_ru\.svg$' \
+    | LC_ALL=C sort -u || true)"
 [ "$README_RES" = "$README_RUS_RES" ] || \
     die "README.md and README_RUS.md reference different resources/ images"
+for res in $LANG_RES; do
+    git cat-file -e "$REF:$res" 2>/dev/null || die "missing $res at $REF"
+done
 
 EXPECTED="$STAGE/expected.list"
 {
@@ -53,6 +63,7 @@ EXPECTED="$STAGE/expected.list"
         setup.sh start.sh setup.bat start.bat \
         tools/vs_reader.py README.md README_RUS.md LICENSE
     printf '%s\n' "$README_RES"
+    printf '%s\n' resources/diagram_en.svg resources/diagram_ru.svg
 } | LC_ALL=C sort -u > "$EXPECTED"
 
 PATHS=()
