@@ -1,8 +1,8 @@
-> English version: [README.md](README.md)
+# sigrok_iso7816_stream — пассивный ISO 7816-сниффер
 
-# sigrok_iso7816_stream
+[English](README.md) | Русский
 
-📢 Новости и обновления проекта: [Сайт](https://atroshin.ru) · [Telegram-канал](https://t.me/youeyeseesee)
+📢 Новости и обновления проекта: [сайт](https://atroshin.ru) · [Telegram-канал](https://t.me/youeyeseesee)
 
 Форк [svenso/sigrok_iso7816](https://github.com/svenso/sigrok_iso7816) с
 **живым GSMTAP-UDP-стримингом**: дешёвый логический анализатор FX2 (клон
@@ -485,6 +485,21 @@ sigrok-cli -i <phone>.sr \
 Чётность — **чётная** по TS 102 221 («чётное число битов, установленных в
 '1', включая бит чётности»); кадры, не прошедшие проверку, помечаются
 `CHKSUM ERROR`, но всё равно декодируются.
+
+## Связанные инструменты
+
+SIMple, SIMtrace Analyser и sigrok_iso7816_stream — три автономных
+инструмента для работы с SIM/UICC-картами, представленные на одном
+[сайте](https://atroshin.ru) и в одном [Telegram-канале](https://t.me/youeyeseesee).
+Каждый полностью независим — устанавливайте только нужные вам:
+
+- **[SIMple](https://github.com/anttro/simple)** — мастерская для UICC/SIM:
+  конструкторы APDU, OTA SCP80/SCP81, симуляция SIM Toolkit и профилирование
+  карт.
+- **[SIMtrace Analyser](https://github.com/anttro/simtrace-analyser)** —
+  анализатор APDU-трассировок GSMTAP-SIM.
+- **[sigrok_iso7816_stream](https://github.com/anttro/sigrok_iso7816_stream)** —
+  пассивный ISO 7816-сниффер на дешёвом логическом анализаторе FX2.
 
 ## Лицензия
 

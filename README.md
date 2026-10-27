@@ -1,6 +1,8 @@
-# sigrok_iso7816_stream
+# sigrok_iso7816_stream — a passive ISO 7816 sniffer
 
-📢 Project news and updates: [Website](https://atroshin.ru) · [Telegram channel](https://t.me/youeyeseesee)
+English | [Русский](README_RUS.md)
+
+📢 Project news and updates: [website](https://atroshin.ru) · [Telegram channel](https://t.me/youeyeseesee)
 
 Fork of [svenso/sigrok_iso7816](https://github.com/svenso/sigrok_iso7816) with
 **live GSMTAP UDP streaming**, making a cheap FX2 logic analyzer (Saleae clone)
@@ -464,6 +466,20 @@ needed beyond `clock_option=native` and `protocol=T=0` for phone captures.
 Parity is **even** per TS 102 221 ("an even number of bits set to '1'
 including the parity bit"); frames failing the check are flagged as
 `CHKSUM ERROR` but still decoded.
+
+## Related tools
+
+SIMple, SIMtrace Analyser and sigrok_iso7816_stream are three standalone
+tools for working with SIM/UICC cards, published together on the same
+[website](https://atroshin.ru) and [news channel](https://t.me/youeyeseesee).
+Each one is fully independent — install only the tools you need:
+
+- **[SIMple](https://github.com/anttro/simple)** — a UICC workbench: APDU
+  construction, SCP80/SCP81 OTA, SIM Toolkit simulation and card profiling.
+- **[SIMtrace Analyser](https://github.com/anttro/simtrace-analyser)** — an
+  APDU trace analyser for GSMTAP-SIM captures.
+- **[sigrok_iso7816_stream](https://github.com/anttro/sigrok_iso7816_stream)** —
+  a passive ISO 7816 sniffer built on a cheap FX2 logic analyser.
 
 ## License
 
