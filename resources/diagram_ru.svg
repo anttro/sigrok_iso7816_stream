@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns="http://www.w3.org/2000/svg" width="960" height="690" viewBox="0 0 960 690" role="img" aria-labelledby="diagram-title diagram-desc" font-family="'Segoe UI', 'Helvetica Neue', Arial, 'DejaVu Sans', sans-serif">
   <title id="diagram-title">sigrok_iso7816_stream: путь сигнала</title>
-  <desc id="diagram-desc">SIM-карта и ридер с пассивным съёмом с контактов, логический анализатор FX2 (fx2lafw, 8 каналов, до 24 МГц), sigrok-cli с декодером iso7816, GSMTAP UDP :4729, SIMtrace Analyser и Wireshark</desc>
+  <desc id="diagram-desc">SIM-карта и устройство с пассивным съёмом с контактов, логический анализатор FX2 (fx2lafw, 8 каналов, до 24 МГц), sigrok-cli с декодером iso7816, GSMTAP UDP :4729, SIMtrace Analyser и Wireshark</desc>
   <defs>
     <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
       <path d="M0 0 L10 5 L0 10 Z" fill="#64748b"/>
@@ -12,7 +12,7 @@
   <rect x="150" y="48" width="210" height="72" rx="12" fill="#eff6ff" stroke="#93c5fd" stroke-width="1.5"/>
   <text x="255" y="90" text-anchor="middle" font-size="20" font-weight="600" fill="#0f172a">SIM-карта</text>
   <rect x="600" y="48" width="210" height="72" rx="12" fill="#eff6ff" stroke="#93c5fd" stroke-width="1.5"/>
-  <text x="705" y="90" text-anchor="middle" font-size="20" font-weight="600" fill="#0f172a">Ридер</text>
+  <text x="705" y="90" text-anchor="middle" font-size="20" font-weight="600" fill="#0f172a">Устройство</text>
   <line x1="372" y1="84" x2="588" y2="84" stroke="#64748b" stroke-width="2" marker-start="url(#arrow)" marker-end="url(#arrow)"/>
   <circle cx="480" cy="84" r="5" fill="#2563eb"/>
   <line x1="480" y1="89" x2="480" y2="196" stroke="#64748b" stroke-width="2" marker-end="url(#arrow)"/>

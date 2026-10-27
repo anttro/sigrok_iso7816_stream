@@ -8,7 +8,7 @@
 **живым GSMTAP-UDP-стримингом**: дешёвый логический анализатор FX2 (клон
 Saleae) ведёт себя как сниффер SIMtrace2:
 
-![Путь сигнала: SIM-карта и ридер с пассивным съёмом с контактов, логический анализатор FX2 (fx2lafw, 8 каналов, до 24 МГц), sigrok-cli с декодером iso7816, GSMTAP UDP :4729, SIMtrace Analyser и Wireshark](resources/diagram_ru.svg)
+![Путь сигнала: SIM-карта и устройство с пассивным съёмом с контактов, логический анализатор FX2 (fx2lafw, 8 каналов, до 24 МГц), sigrok-cli с декодером iso7816, GSMTAP UDP :4729, SIMtrace Analyser и Wireshark](resources/diagram_ru.svg)
 
 [SIMtrace Analyser](https://github.com/anttro/simtrace-analyser) —
 рекомендуемый инструмент для визуализации живых трасс и просмотра
