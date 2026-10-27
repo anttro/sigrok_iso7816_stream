@@ -194,16 +194,6 @@ if you wire differently:
 FX2 input threshold is TTL-ish (~1.4V): 1.8V-class cards may read unreliably;
 3V/5V classes are fine.
 
-**Samplerate and 8-bit mode (important):** the FX2's nominal 24 MHz is only
-available when sampling in 8-bit mode, i.e. when **only channels D0–D7 are
-enabled**. Enabling the 9th channel (A0/analog on CWAV AX clones) or any
-analog input forces 16-bit collection, which libsigrok caps at 12 MHz.
-`start.sh`/`start.bat` therefore pass `-C D0,D1,D2,D3,D4,D5,D6,D7`
-explicitly and default to **16 MHz** (comfortably under the 24 MHz USB
-bandwidth ceiling; ~3.3 samples per 4.8 MHz clock cycle). `setup.sh`/
-`setup.bat` probe and report your hardware's actual maximum under the
-same restriction.
-
 ### Clock modes
 
 - `native` (default) — live captures.  The decoder follows the PPS speed
