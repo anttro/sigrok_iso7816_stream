@@ -62,7 +62,7 @@ jobs:
           Extract the archive, then run `./setup.sh` + `./start.sh` (Linux) or
           `setup.bat` + `start.bat` (Windows).  `SHA256SUMS` (attached) verifies
           both downloads.  Requires sigrok-cli and the FX2 firmware; see the
-          README *Installation* section for the full prerequisites.
+          README *Install and start* section for the full prerequisites.
 
           **Install - source checkout (development)**
           `git clone https://github.com/anttro/sigrok_iso7816_stream.git`, then
