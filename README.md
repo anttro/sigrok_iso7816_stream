@@ -18,6 +18,262 @@ recommended tool for visualising live traces and viewing saved captures —
 it can also import/export GSMTAP pcap files (including the PCAP written by
 this decoder's `pcap_file=<path>` option).
 
+## Install and start
+
+Both ways install the same decoder — pick one:
+
+- **Download (recommended)** — a release archive.  Nothing to clone and no git
+  history: extract it, run `setup`, then `start`.  Best if you only want to
+  capture.
+- **Source checkout** — a `git clone`.  The same runtime plus the development
+  material: `tests/` and the trace/baseline tools (`tools/capture_baseline.sh`,
+  `tools/compare_baseline.sh`, `tools/vs_reader.py`).  Example traces
+  (`examples/`) are gitignored and stay local in either case.  Release archives
+  do not contain `tests/`, the dev tools or `examples/`.
+
+### Download (recommended)
+
+Grab the latest archive from
+[Releases](https://github.com/anttro/sigrok_iso7816_stream/releases/latest):
+
+- `sigrok_iso7816_stream-<version>.tar.gz` — Linux
+- `sigrok_iso7816_stream-<version>.zip` — Windows
+
+Each release also publishes `SHA256SUMS`, which lists **both** archives; keep
+it next to the file you downloaded and verify:
+
+```bash
+sha256sum -c --ignore-missing SHA256SUMS   # GNU coreutils (Linux)
+```
+
+On Windows run `certutil -hashfile sigrok_iso7816_stream-<version>.zip SHA256`
+and compare the output with the `.zip` line in `SHA256SUMS`.
+
+#### Linux (download)
+
+```bash
+tar xzf sigrok_iso7816_stream-<version>.tar.gz
+cd sigrok_iso7816_stream-<version>
+./setup.sh
+./start.sh
+```
+
+`setup.sh` verifies sigrok-cli and the FX2 firmware package
+(`sigrok-firmware-fx2lafw`) are installed, symlinks the project directory into
+`~/.local/share/libsigrokdecode/decoders/iso7816` (user-local decoders shadow
+system-wide ones), and probes the connected device for its maximum supported
+samplerate.
+
+#### Windows (download)
+
+Prerequisites:
+
+1. **sigrok-cli** Windows installer (0.7.2 x86_64) from
+   [sigrok.org/wiki/Downloads](https://sigrok.org/wiki/Downloads) — the tested
+   release.  Nightly Windows installers are also published on that page; they
+   may change the sigrok-cli syntax or the decoder API, so the 0.7.2 release
+   installer remains the supported version.
+   If sigrok-cli fails to start with error `0xc0150002`, install the
+   [Visual C++ 2010 Redistributable](https://www.microsoft.com/en-us/download/details.aspx?id=26999)
+   (`msvcr100.dll` is required by the bundled Python runtime).
+2. fx2lafw firmware ships bundled with the installer — no separate download.
+
+Driver setup (FX2 dongles need WinUSB, the vendor driver won't work):
+
+- Run **Zadig**, which ships *inside* the sigrok-cli installation directory
+  (also reachable from the Start menu). Select the FX2 device in its dropdown
+  and install the **WinUSB** driver.
+- After firmware upload the device re-enumerates with a different VID/PID —
+  if it still isn't found, run Zadig a **second time** for the re-enumerated
+  entry.
+- Windows binds drivers per USB port when no serial number is present:
+  moving the dongle to another port may require repeating Zadig.
+
+Then extract the release `.zip` (right-click → Extract All in Explorer) and
+run, inside the extracted folder:
+
+```bat
+setup.bat
+start.bat
+```
+
+`setup.bat` verifies sigrok-cli and bundled firmware, registers this project's
+decoder via a junction into `%LOCALAPPDATA%\libsigrokdecode\decoders\iso7816`
+(confirmed by `sigrok-cli -L` listing `iso7816`), and probes the device's
+accepted samplerates.  The release zip ships the batch files with CRLF line
+endings, so no conversion is needed.  `start.bat --help` lists its options
+(the core subset of `start.sh`: channels, samplerate, clock, host/port, pcap,
+protocol, debug).
+
+### Source checkout
+
+#### Linux (source checkout)
+
+```bash
+git clone git@github.com:anttro/sigrok_iso7816_stream.git
+cd sigrok_iso7816_stream
+./setup.sh
+./start.sh
+```
+
+`setup.sh` performs the same checks and symlink as above.
+
+#### Windows (source checkout)
+
+The Windows prerequisites (sigrok-cli + the Visual C++ 2010 Redistributable,
+the bundled fx2lafw firmware, and the Zadig/WinUSB driver setup) are the same
+as in [Windows (download)](#windows-download) above.
+
+```bat
+git clone git@github.com:anttro/sigrok_iso7816_stream.git
+cd sigrok_iso7816_stream
+setup.bat
+start.bat
+```
+
+`setup.bat` performs the same checks and junction registration as above.
+`start.bat` supports the core option subset; the space form is the primary
+one, and `--clk=CH` also works (`start.bat --help` lists them):
+
+```bat
+start.bat --clk D1 --data D6
+```
+
+Note: batch files need CRLF line endings; the repo enforces this via
+`.gitattributes`, so a fresh clone on Windows is already correct (the release
+zip ships the same CRLF files).
+
+## Usage
+
+`start.sh` captures continuously at 16 MHz until Ctrl+C (`rc=130`) and streams
+GSMTAP to 127.0.0.1:4729.  Defaults: pins D5=CLK, D0=I/O, D4=RST, D2=VCC.
+Override via args:
+
+```bash
+./start.sh --clk=D1 --data=D6          # different wiring
+./start.sh --no-rst --no-vcc           # CLK+I/O only
+./start.sh --host=10.0.28.7            # stream to a remote analyser
+./start.sh --pcap=session.pcap         # also record decoded events to PCAP
+./start.sh --debug                     # full decoder + sigrok output (all
+                                       # annotation rows + libsigrok -l 4);
+                                       # by default only decoded APDUs and
+                                       # decoder warnings/errors are shown
+```
+
+On Windows, `start.bat` takes the same core options (space form; the
+`--opt=value` form also works) — see the Windows install notes above.
+
+### Wiring
+
+The recommended tap is the short cable with external pull resistors (see
+*The tap in practice* below): 10 kΩ to GND on VCC (pulls low when off) and
+47 kΩ to VCC on DATA (faster rise to high).  Its pin mapping is **fixed and
+known in advance** — see the "Pin mapping" table below — and is exactly what
+`start.sh` defaults to (`D5`=CLK, `D0`=I/O, `D4`=RST, `D2`=VCC).  No wiring
+auto-detection is needed; the pins never move.
+
+> **GND first.** Plug GND first and verify it manually (continuity meter
+> or known-good contact) — a missing or loose ground masquerades as every
+> other fault at once: floating lines, phantom start bits, all-zero frames.
+
+### Pin mapping
+
+The FX2 clone channels are assigned via `-P iso7816:clk=N:data=N:rst=N:vcc=N`.
+The recommended short-cable tap (external pull resistors) uses fixed pins that
+are exactly `start.sh`'s defaults; `--clk`/`--data`/`--rst`/`--vcc` remap them
+if you wire differently:
+
+| FX2 channel | SIM contact | Signal |
+|-------------|-------------|--------|
+| D0 | C7 | I/O |
+| D2 | C1 | VCC (digital level only!) |
+| D4 | C2 | RST |
+| D5 | C3 | CLK |
+| GND | C5 | GND |
+
+FX2 input threshold is TTL-ish (~1.4V): 1.8V-class cards may read unreliably;
+3V/5V classes are fine.
+
+**Samplerate and 8-bit mode (important):** the FX2's nominal 24 MHz is only
+available when sampling in 8-bit mode, i.e. when **only channels D0–D7 are
+enabled**. Enabling the 9th channel (A0/analog on CWAV AX clones) or any
+analog input forces 16-bit collection, which libsigrok caps at 12 MHz.
+`start.sh`/`start.bat` therefore pass `-C D0,D1,D2,D3,D4,D5,D6,D7`
+explicitly and default to **16 MHz** (comfortably under the 24 MHz USB
+bandwidth ceiling; ~3.3 samples per 4.8 MHz clock cycle). `setup.sh`/
+`setup.bat` probe and report your hardware's actual maximum under the
+same restriction.
+
+### Clock modes
+
+- `native` (default) — live captures.  The decoder follows the PPS speed
+  switch and re-arms on RST, so warm resets and post-PPS traffic decode
+  correctly.
+- `detect` — for offline experiments or captures without PPS.  It does not
+  follow the PPS switch, so post-PPS traffic can be misread.
+- `sample_as_clock` — experimental upstream mode; not recommended for SIM
+  captures.
+
+### Troubleshooting live capture
+
+**The capture stops early (especially on Windows).** A common cause is the
+wrong USB driver. The Saleae Logic driver works only with Saleae Logic
+software; sigrok needs the **WinUSB** driver. Install it with **Zadig**
+(bundled with the sigrok-cli installer) and repeat the assignment after the
+device re-enumerates with the firmware's VID/PID. See the sigrok documentation:
+
+- https://sigrok.org/wiki/Windows#Drivers
+- https://sigrok.org/wiki/Fx2lafw
+
+**Device not found / no signal.** Check the WinUSB driver (Windows), the
+fx2lafw firmware, the wiring and GND (see Wiring), and try another USB port or
+a known-good cable. Cheap USB cables and hubs are common causes of stalls.
+
+**The capture ends by itself (`rc=0`).** The FX2 is at its USB bandwidth limit
+at high samplerates. Lower `--samplerate`, avoid hubs, and close other USB
+traffic. `start.sh` automatically restarts the capture on `rc=0` (default 20
+restarts, 2 s apart; `--no-loop`, `--max-restarts=N`, `--restart-delay=S`).
+With `--pcap=FILE`, each restart writes `FILE.<N>.<ext>`.
+
+`start.sh` runs until Ctrl+C; keystrokes do not stop it (the "press any key"
+prompt is disabled). Useful options:
+
+```bash
+./start.sh --pcap=s.pcap --log=s.log           # record events and the rc= verdict
+./start.sh ... --samplerate=24M                # more timing headroom if needed
+./start.sh ... --klog                          # also record the kernel journal
+./start.sh ... --debug                         # full decoder + sigrok output
+```
+
+- `--log` records the session-end `rc=` line.
+- The decoder logs `SIGNAL INTEGRITY WARNING` when ≥ 8 of the last 64 frames
+  fail parity.
+- Desynced packets are kept and flagged `GSMTAP_FLAG_BAD_FCS` in the GSMTAP
+  header `res` byte — visible in Wireshark as a BAD-FCS warning.
+
+### Raw sigrok-cli
+
+Equivalent commands without the wrapper scripts:
+
+```bash
+# Minimal: CLK+I/O only, live stream to localhost:4729
+sigrok-cli -d fx2lafw --config samplerate=12M --continuous \
+  -P iso7816:clk=D0:data=D1:clock_option=detect -A iso7816
+
+# Full wiring: CLK + I/O + RST + VCC with line event tracking
+sigrok-cli -d fx2lafw --config samplerate=12M --continuous \
+  -P iso7816:clk=D5:data=D0:rst=D4:vcc=D2:clock_option=native:rst_detect=true:vcc_detect=true \
+  -A iso7816
+
+# Stream to a remote analyser / disable streaming / write PCAP file
+... -P iso7816:...:gsmtap_host=10.0.28.7 ...
+... -P iso7816:...:gsmtap_enable=false ...
+... -P iso7816:...:pcap_file=trace.pcap ...
+
+# Classic upstream mode: binary PCAP to stdout
+sigrok-cli -i capture.sr -P iso7816:clk=2:data=0 -B iso7816=pcap > out.pcap
+```
+
 ## The tap in practice
 
 ![Components](resources/components.jpg)
@@ -47,23 +303,23 @@ this decoder's `pcap_file=<path>` option).
 ![Short cable pull resistors](resources/short_cable_pull_resistors.jpg)
 *Short cable with external pull resistors — 10 kΩ to GND on VCC (pulls low when off), 47 kΩ to VCC on DATA (faster rise to high)*
 
-## What was added on top of upstream
+## Features
 
 | Feature | Description |
 |---------|-------------|
 | Live GSMTAP stream | Every decoded event is sent as a GSMTAP-SIM UDP packet (default on, mimics simtrace2-sniff) |
-| Correct sub_types | ATR=0x01 and PPS=0x02 now tagged properly in PCAP output (upstream hardcoded everything to APDU=0x00) |
+| Correct sub_types | ATR=0x01 and PPS=0x02 are tagged properly in PCAP output |
 | ATR/PPS in PCAP | ATR and combined PPS request+response are emitted as PCAP packets |
 | RST tracking (optional) | `rst_detect=true`: emits reset assert/deassert events (sub_type 0x10) |
 | VCC tracking (optional) | `vcc_detect=true`: emits power on/off events (sub_type 0x11) |
 | Direct PCAP file | `pcap_file=<path>` writes PCAP without shell redirection |
-| Start-bit deglitch | Deglitch in the start-bit detector (2 samples at 16 MHz, scaled from the sample rate since v1.9.7) eliminates sub-ETU LOW glitches from FX2LP pull-up artifacts, preventing byte misalignment on fast phone traces |
-| Mid-session ETU lock | The DATA-edge ETU estimator rejects guard-only (all-zero) and single-spacing bursts and invalidates a rate that fails parity, so a capture at a non-default F/D locks safely |
-| ATR / resync guards | A DATA-state `0x3B`/`0x3F` is an ATR candidate only before the first APDU; parity-dirty or bare (TS+T0) frames are ignored, and `resync_idle` really waits for the idle level |
-| Inverse convention | TS=0x3F ATRs follow ISO 7816-3 7.1: inverted data, msb first, start bit still LOW from an idle-HIGH line |
-| T=1 blocks | NAD/PCB/LEN/INF/LRC decode with M-bit chaining; the I-block INF is emitted as the APDU, R/S blocks are not; a truncated capture ends cleanly |
-| Parity flag | A packet containing a parity-error byte is emitted with the GSMTAP BAD_FCS flag (not just an annotation) |
-| Rate-aware thresholds | Start-bit deglitch, guard floors and the ETU glitch floor scale from the capture sample rate instead of assuming 16 MHz |
+| Start-bit deglitch | Suppresses sub-ETU LOW glitches (2 samples at 16 MHz, scaled to the samplerate) |
+| Mid-session ETU lock | Recovers the ETU from DATA for captures without a usable CLK; a rate that fails parity is re-measured |
+| ATR / resync guards | Validates the ATR, ignores mis-framed ATR candidates, and re-aligns after a desync |
+| Inverse convention | Supports direct (TS=0x3B) and inverse (TS=0x3F) cards |
+| T=1 blocks | Decodes NAD/PCB/LEN/INF/LRC with M-bit chaining; the I-block INF is emitted as the APDU |
+| Parity flag | Packets containing a parity-error byte are flagged `GSMTAP_FLAG_BAD_FCS` |
+| Rate-aware thresholds | Deglitch, guard and ETU floors scale with the capture samplerate |
 
 ## Decoder options
 
@@ -117,344 +373,6 @@ This carriage is this decoder's own extension (upstream simtrace2-sniff
 never sets `res`); the flag semantics mirror simtrace2's per-message USB
 data flags and are not part of the libosmocore spec.
 
-## Usage
-
-Quick start (after installing — release download or source checkout; see
-Installation below):
-
-```bash
-./setup.sh   # check sigrok-cli, register decoder symlink
-./start.sh   # capture + GSMTAP stream to 127.0.0.1:4729
-```
-
-On Windows the same two steps are `setup.bat` then `start.bat` (see
-Installation below).
-
-`start.sh` defaults: pins D5=CLK, D0=I/O, D4=RST, D2=VCC, 16 MHz samplerate.
-Override via args:
-
-```bash
-./start.sh --clk=D1 --data=D6          # different wiring
-./start.sh --no-rst --no-vcc           # CLK+I/O only
-./start.sh --host=10.0.28.7            # stream to a remote analyser
-./start.sh --pcap=session.pcap         # also record decoded events to PCAP
-./start.sh --debug                     # full decoder + sigrok output (all
-                                       # annotation rows + libsigrok -l 4);
-                                       # by default only decoded APDUs and
-                                       # decoder warnings/errors are shown
-```
-
-### Wiring
-
-The recommended tap is the short cable with external pull resistors (see
-the photos above): 10 kΩ to GND on VCC (pulls low when off) and 47 kΩ to
-VCC on DATA (faster rise to high).  Its pin mapping is **fixed and known
-in advance** — see the "Pin mapping" table below — and is exactly what
-`start.sh` defaults to (`D5`=CLK, `D0`=I/O, `D4`=RST, `D2`=VCC).  No
-wiring auto-detection is needed; the pins never move.
-
-> **GND first.** Plug GND first and verify it manually (continuity meter
-> or known-good contact) — a missing or loose ground masquerades as every
-> other fault at once: floating lines, phantom start bits, all-zero frames.
-
-### Robustness against noisy signals
-
-Live captures can glitch (a phantom start bit during power-up used to
-shift the whole ATR parse off-by-one). The decoder now:
-
-- validates the ATR's TS byte (`0x3B`/`0x3F` per TS 102 221 §5.2.2) and
-  resyncs on the next real falling edge if it is bogus;
-- never lets a decode exception kill the capture — errors are logged,
-  annotated, and the state machine resyncs (end-of-stream still exits
-  cleanly);
-- decodes T=1 blocks (NAD/PCB/LEN/INF/LRC) and bounds the M-bit chain so garbage
-  cannot loop forever.
-
-After an accepted PPS the decoder **follows the speed switch**: in
-native CLK mode `clock_skip` becomes F/D CLK cycles per bit (e.g.
-512/16 = 32), matching both sides' new UART rate.  Live capture
-confirmed that keeping 372 after PPS aliases all subsequent traffic.
-
-A **warm reset** (the reader re-asserts RST every ~1.6 s) makes the card
-answer with a fresh ATR at the default 372 cycles/bit. The decoder
-**re-arms the ATR hunt on RST deassert**: state back to `FIND START`,
-native skip reset to 372, hunt count cleared — so the re-ATR parses as
-an ATR instead of being mis-read as TPDU traffic at the PPS-negotiated
-rate. A **half-ETU start-bit guard** (edge reader) additionally rejects the phantom
-`0x00` an idle glitch can insert before that ATR. Requires
-`rst_detect=true` (the `rst` channel assigned); without it a mid-session
-reset is still mis-read.
-
-### Troubleshooting live capture
-
-`start.sh` runs a single `--continuous` capture until you press **Ctrl+C**
-(`rc=130`). stdin is detached from sigrok-cli, so pressing keys/Enter in
-the terminal does **not** stop it (sigrok's "press any key to stop
-acquisition" prompt is disabled) — that keypress was previously
-mis-read as a "premature abort", but there was never a device fault.
-
-Most of the early "noise" seen in captures (parity errors, mis-framed
-garbage, a bouncing VCC line) was a badly-decoded state machine, not the
-hardware: re-seating the tap did nothing, while the decoder rewrite fixed
-it completely (warm-reset re-arm, half-ETU start-bit guard, 10 ms VCC
-debounce, T=0 exchange reassembly). A clean capture now decodes to zero
-garbage — see the `vs_reader.py` validation below.
-
-If a capture *does* end on its own (`rc=0`), the device genuinely stopped
-streaming; the FX2's USB bandwidth ceiling at sustained high sample rates
-is the usual suspect.
-
-```bash
-./start.sh --pcap=s.pcap --log=s.log           # also record decoded events, log rc=
-./start.sh ... --samplerate=24M                # more timing headroom if needed
-./start.sh ... --klog                          # also record kernel journal
-./start.sh ... --debug                         # full output: all annotation rows
-                                               # + libsigrok internals at -l 4
-                                               # (default: APDUs + warnings only)
-```
-
-`start.sh` captures a continuous stream at the configured rate (default 16
-MHz) until Ctrl+C (`rc=130`). A healthy capture never ends by itself; if the
-FX2 drops the USB transfer mid-session (a flaky device, `rc=0` "device
-stopped streaming"), the capture auto-restarts so the session is not lost —
-it re-launches on every `rc=0` until you press Ctrl+C or hit
-`--max-restarts=N` (default 20; `0` = unlimited), with a `--restart-delay=S`
-gap (default 2 s). When restarting with `--pcap=FILE`, each session's capture
-is written to `FILE.<N>.<ext>` so a restart never overwrites the previous one,
-and the repetitive `sr_session_stop: session was NULL` teardown line is
-filtered from stderr.
-
-- `--no-loop` disables auto-restart (single capture only).
-- `--loop` forces auto-restart on (this is the default).
-- `--max-restarts=N` caps restarts (default 20; `0` = unlimited).
-- `--restart-delay=S` seconds to wait between restarts (default 2).
-- `--log` captures the `rc=` verdict line for the session end.
-- The decoder logs `SIGNAL INTEGRITY WARNING` when >= 8 of the last
-  64 frames fail parity.
-- Desynced TPDUs (mis-framed exchanges) are kept but flagged with
-  `GSMTAP_FLAG_BAD_FCS` in the GSMTAP header `res` byte — visible in
-  Wireshark as a BAD-FCS warning.
-- A T=0 header with a structurally invalid INS (ISO 7816-4 §5.1.2:
-  `0x00` or `0x6x`/`0x9x`) is almost always a one-byte shift from
-  a stray leading byte (e.g. a leftover SW2 read after a PACKETEND).
-  Instead of silently dropping the whole 5-byte window (which let the next
-  byte become a bogus CLA and swallow the remaining dialog into one CONCAT
-  packet), the decoder drops only the leading byte and re-frames the rest,
-  recovering the real command.  Every consumed-but-unemitted byte is
-  explicitly logged (`discarded byte 0x…: reason`); idle 0x00/0xFF discards
-  are rate-limited, non-idle discards always produce a decoder annotation.
-- A card may finish a command with SW1 SW2 at the first procedure byte
-  (ISO 7816-3 §10.3.3), including a case-2 command with P3 > 0: the SW is
-  framed as the status word, not read as command data.  A response
-  **shorter than Le** is split at the status word and the packet is
-  flagged `BAD_FCS` (the following exchanges stay intact), and `P3=0`
-  (Le=256) response data is kept.
-
-Performance: in native CLK mode the decoder calibrates samples per CLK
-edge once from the ATR's first frame, then advances bit timing with
-single sample-skip waits instead of one wait per CLK edge. The PPS speed
-switch is followed via `clock_skip = F/D`; there is no post-PPS or
-parity-triggered recalibration.
-
-### Mode comparison on FX2 hardware (A/B result)
-
-- `native` decoded real traffic (ATR, PPS switch, 100+ valid APDUs in a
-  12 s window); the one persistent artifact was the VCC sense line
-  "bouncing" — the ~1 kHz ringing the 10 ms debounce now suppresses.
-- `detect` never produced a usable session on this rig: it missed the
-  PPS speed switch entirely (no PPS handling fired), aliasing all
-  post-PPS traffic; a second attempt caught a dead I/O line.
-
-`native` stays the default. Use `--clock=detect` only for offline
-experiments without PPS. A run full of all-zero frames means the tap
-lost contact with a line.
-
-Parity is **even** per TS 102 221 ("an even number of bits set to '1'
-including the parity bit"); frames failing the check are flagged as
-`CHKSUM ERROR` but still decoded.
-
-Equivalent raw sigrok-cli commands:
-
-```bash
-# Minimal: CLK+I/O only, live stream to localhost:4729
-sigrok-cli -d fx2lafw --config samplerate=12M --continuous \
-  -P iso7816:clk=D0:data=D1:clock_option=detect -A iso7816
-
-# Full wiring: CLK + I/O + RST + VCC with line event tracking
-sigrok-cli -d fx2lafw --config samplerate=12M --continuous \
-  -P iso7816:clk=D5:data=D0:rst=D4:vcc=D2:clock_option=native:rst_detect=true:vcc_detect=true \
-  -A iso7816
-
-# Stream to a remote analyser / disable streaming / write PCAP file
-... -P iso7816:...:gsmtap_host=10.0.28.7 ...
-... -P iso7816:...:gsmtap_enable=false ...
-... -P iso7816:...:pcap_file=trace.pcap ...
-
-# Classic upstream mode: binary PCAP to stdout
-sigrok-cli -i capture.sr -P iso7816:clk=2:data=0 -B iso7816=pcap > out.pcap
-```
-
-### Pin mapping
-
-The FX2 clone channels are assigned via `-P iso7816:clk=N:data=N:rst=N:vcc=N`.
-The recommended short-cable tap (external pull resistors) uses fixed pins that
-are exactly `start.sh`'s defaults; `--clk`/`--data`/`--rst`/`--vcc` remap them
-if you wire differently:
-
-| FX2 channel | SIM contact | Signal |
-|-------------|-------------|--------|
-| D0 | C7 | I/O |
-| D2 | C1 | VCC (digital level only!) |
-| D4 | C2 | RST |
-| D5 | C3 | CLK |
-| GND | C5 | GND |
-
-FX2 input threshold is TTL-ish (~1.4V): 1.8V-class cards may read unreliably;
-3V/5V classes are fine.
-
-**Samplerate and 8-bit mode (important):** the FX2's nominal 24 MHz is only
-available when sampling in 8-bit mode, i.e. when **only channels D0–D7 are
-enabled**. Enabling the 9th channel (A0/analog on CWAV AX clones) or any
-analog input forces 16-bit collection, which libsigrok caps at 12 MHz.
-`start.sh`/`start.bat` therefore pass `-C D0,D1,D2,D3,D4,D5,D6,D7`
-explicitly and default to **16 MHz** (comfortably under the 24 MHz USB
-bandwidth ceiling; ~3.3 samples per 4.8 MHz clock cycle). `setup.sh`/
-`setup.bat` probe and report your hardware's actual maximum under the
-same restriction.
-
-## Installation
-
-Both ways install the same decoder — pick one:
-
-- **Download (recommended)** — a release archive.  Nothing to clone and no git
-  history: extract it, run `setup`, run `start`.  Best if you only want to
-  capture.
-- **Source checkout** — a `git clone`.  The same runtime plus the development
-  material: `tests/` and the trace/baseline tools (`tools/capture_baseline.sh`,
-  `tools/compare_baseline.sh`, `tools/vs_reader.py`).  The example traces
-  (`examples/`) are gitignored and stay local in either case.  The release
-  archives intentionally do not contain `tests/`, the dev tools or
-  `examples/`.
-
-### Download (recommended)
-
-Grab the latest archive from
-[Releases](https://github.com/anttro/sigrok_iso7816_stream/releases/latest):
-
-- `sigrok_iso7816_stream-<version>.tar.gz` — Linux
-- `sigrok_iso7816_stream-<version>.zip` — Windows
-
-Each release also publishes `SHA256SUMS`, which lists **both** archives; keep
-it next to the file you downloaded and verify:
-
-```bash
-sha256sum -c --ignore-missing SHA256SUMS   # GNU coreutils (Linux)
-```
-
-On Windows run `certutil -hashfile sigrok_iso7816_stream-<version>.zip SHA256`
-and compare the output with the `.zip` line in `SHA256SUMS`.
-
-#### Linux (download)
-
-```bash
-tar xzf sigrok_iso7816_stream-<version>.tar.gz
-cd sigrok_iso7816_stream-<version>
-./setup.sh
-./start.sh
-```
-
-`setup.sh` verifies sigrok-cli and the FX2 firmware package
-(`sigrok-firmware-fx2lafw`) are installed, symlinks the project directory into
-`~/.local/share/libsigrokdecode/decoders/iso7816` (user-local decoders shadow
-system-wide ones), and probes the connected device for its maximum supported
-samplerate.
-
-#### Windows (download)
-
-Prerequisites:
-
-1. **sigrok-cli** Windows installer (0.7.2 x86_64) from
-   [sigrok.org/wiki/Downloads](https://sigrok.org/wiki/Downloads) — the tested
-   release.  Nightly Windows installers are also published on that page; they
-   may change the sigrok-cli syntax or the decoder API, so the 0.7.2
-   release installer remains the supported version.
-   If sigrok-cli fails to start with error `0xc0150002`, install the
-   [Visual C++ 2010 Redistributable](https://www.microsoft.com/en-us/download/details.aspx?id=26999)
-   (`msvcr100.dll` is required by the bundled Python runtime).
-2. fx2lafw firmware ships bundled with the installer — no separate download.
-
-Driver setup (FX2 dongles need WinUSB, the vendor driver won't work):
-
-- Run **Zadig**, which ships *inside* the sigrok-cli installation directory
-  (also reachable from the Start menu). Select the FX2 device in its dropdown
-  and install the **WinUSB** driver.
-- After firmware upload the device re-enumerates with a different VID/PID —
-  if it still isn't found, run Zadig a **second time** for the re-enumerated
-  entry.
-- Windows binds drivers per USB port when no serial number is present:
-  moving the dongle to another port may require repeating Zadig.
-
-Then extract the release `.zip` (right-click → Extract All in Explorer) and
-run, inside the extracted folder:
-
-```bat
-setup.bat
-start.bat
-```
-
-`setup.bat` verifies sigrok-cli and bundled firmware, registers this project's
-decoder via a junction into `%LOCALAPPDATA%\libsigrokdecode\decoders\iso7816`
-(confirmed by `sigrok-cli -L` listing `iso7816`), and probes the device's
-accepted samplerates.  The release zip ships the batch files with CRLF line
-endings, so no conversion is needed.  `start.bat --help` lists its options
-(the core subset of `start.sh`: channels, samplerate, clock, host/port, pcap,
-protocol, debug).
-
-### Linux (source checkout)
-
-```bash
-git clone git@github.com:anttro/sigrok_iso7816_stream.git
-cd sigrok_iso7816_stream
-./setup.sh
-```
-
-A fresh clone needs the same `./setup.sh` checks and symlink as above: it
-verifies sigrok-cli and the FX2 firmware package, symlinks the project
-directory into `~/.local/share/libsigrokdecode/decoders/iso7816` and probes
-the device's maximum samplerate.
-
-### Windows (source checkout)
-
-The Windows prerequisites (sigrok-cli + the Visual C++ 2010 Redistributable,
-the bundled fx2lafw firmware, and the Zadig/WinUSB driver setup) are the same
-as in [Windows (download)](#windows-download) above.
-
-```bat
-git clone git@github.com:anttro/sigrok_iso7816_stream.git
-cd sigrok_iso7816_stream
-setup.bat
-```
-
-`setup.bat` performs the same checks and junction registration as above.
-`start.bat` supports the core option subset (channels, samplerate, clock,
-host/port, pcap, protocol, debug; `start.sh` has the full set) — the space
-form is the primary one, and `--clk=CH` also works:
-
-```bat
-start.bat --clk D1 --data D6
-start.bat --help
-```
-
-Capture works the same as on Linux:
-
-```bat
-start.bat                   rem capture + GSMTAP stream
-```
-
-Note: batch files need CRLF line endings; the repo enforces this via
-`.gitattributes`, so a fresh clone on Windows is already correct (the release
-zip ships the same CRLF files).
-
 ## RST/VCC detection notes and limitations
 
 - Events are detected **asynchronously before the first ATR** (power-on /
@@ -465,13 +383,9 @@ zip ships the same CRLF files).
 - VCC is digital-only: the decoder sees powered/not-powered, never the
   voltage class (1.8/3/5V).
 - **RST and VCC use level-stability hysteresis at 10 ms** (samplerate-scaled):
-  a new level is reported only once it has been continuously stable for ≥ 10 ms
-  — either because it persists that long, or because it ends after being stable
-  that long.  This makes power-up and power-down *symmetric*: a VCC sense line
-  that **rings on the rising edge** (noisy/floating tap) no longer loses its
-  "VCC on" event — it fires once the line settles HIGH, instead of being eaten
-  by edge debounce.  RST uses the same scheme, so a brief RST glitch no longer
-  triggers a phantom warm-reset re-arm.
+  a new level is reported only once it has been continuously stable for ≥ 10 ms.
+  This makes power-up and power-down symmetric and suppresses ringing and
+  short glitches.
 - **VCC events are generally unreliable — prefer not to track VCC.** A floating
   or unconnected VCC sense pin reads HIGH at all times (logic-high with no load),
   so the decoder sees "powered" constantly and emits spurious power events on
@@ -482,23 +396,14 @@ zip ships the same CRLF files).
 - Unassigned optional channels are ignored even if `rst_detect`/`vcc_detect`
   is enabled (guarded via `has_channel()`).
 
-## Testing
+## Development and testing
 
-Verified against the upstream example captures:
-
-```bash
-# ATR+PPS+54 APDUs from the test_8 reader capture (~19s decode)
-# GSMTAP stream verified with tshark (ATR/APDU dissected natively),
-# custom 0x10/0x11 events verified with a UDP listener, and end-to-end
-# into the SIMtrace Analyser server (POST /api/capture/start → decode → stop).
-```
-
-A synthetic VCD generator covering RST/VCC edge cases lives in the project
-notes (`projects/SIGROK_ISO7816.md` in the parent workspace).
+The decoder is validated against example captures with `tools/vs_reader.py`.
+Trace fixtures are kept locally and are not part of the repository.
 
 ### Validation against the reader SDK (`tools/vs_reader.py`)
 
-On a controlled rig (PCSC reader driven by software) the reference APDU log
+On a controlled rig (PC/SC reader driven by software) the reference APDU log
 from the reader SDK can be diffed against the decoded PCAP:
 
 ```bash
@@ -511,32 +416,12 @@ python3 tools/vs_reader.py <reader-log>.log out.pcap
 `vs_reader.py` aligns each reader-log exchange to the capture APDUs
 (byte-exact LCS match) and classifies the leftovers as proactive/CAT
 (unseen by the reader SDK), pre-capture/dropped, or garbage.
-The mid-session capture whose warm resets previously produced 4 garbage
-events — with the re-arm + start-bit guard it decodes to **0 garbage**
-(`RESULT: OK - capture fully explained`).
-
-test_7 (4 ATR resets fragmenting the session) now captures all 37/37 reader
-exchanges (up from 10/37 before the deglitch fix). Samsung phone traces with
-16 CLK/ETU (F=512/D=32) now de-concatenate to 924 individual T=0 exchanges
-(previously merged into 52 oversized APDUs).
-
-Replayable trace fixtures (kept locally, outside the repo) cover
-controlled-rig reader sessions (with their reader-SDK ground-truth logs),
-phone captures with gated CLK, and **cold-boot captures** that start
-*before* power-up (VCC/RST low at t=0).  The four Samsung fixtures are
-cold boots taken with a new short cable (30 mm wires, external pull
-resistors GND→VCC and VCC→DATA), named channels `DATA/VCC/RST/CLK` on bits
-0/2/4/5; the `sim2` variants are cropped to the power-on window.
 
 ### Cold-boot captures (capture starts before power-up)
 
-When the capture starts pre-power-up, the decoder must arm the ATR
-hunt because RST is still low at sample 0: it primes the initial
-VCC/RST levels on the first step (instead of defaulting them to deasserted),
-and on an RST-low-at-start it enters `FIND START` with a cleared ETU, so the
-pre-ATR power-up DATA transitions cannot lock a bogus bit rate.  It then
-decodes the full ATR (`3b9f96801fc78031e073fe2117574a3382033339001e`) with
-0 garbage:
+When the capture starts before power-up, RST is still low at sample 0.  Use
+`rst_detect=true` and `protocol=T=0`; the decoder arms the ATR hunt on the
+initial RST level and decodes the full ATR.  Example:
 
 ```bash
 sigrok-cli -i <coldboot>.sr \
@@ -544,48 +429,16 @@ sigrok-cli -i <coldboot>.sr \
   -A iso7816
 ```
 
-An RST deassert that lands while an ATR parse is already in progress no longer
-re-arms the hunt mid-read — it logs `RST deasserted (hunt/ATR already in
-progress)` and leaves the in-flight ATR alone (test_8/test_7 CHKSUM 18→0).
-
 ### Capture scenarios: reader (constant CLK) and phone (Clock Stop Mode)
 
-The decoder handles the two physically different SIM sniffing setups:
-
 - **Reader / constant-CLK capture** — the reader drives a steady CLK for the
-  whole session. In mid-session mode the capture
-  decodes to **0 garbage** (`RESULT: OK`) against the reader-SDK
-   ground truth (`tools/vs_reader.py <reader-log>.log out.pcap`).
-  Warm-reset reader captures use the synthetic-T=0-ATR fallback.
-
-- **Phone / stopped-CLK capture** — the phone gates or stops CLK between
-  transfers (Clock Stop Mode), so the ETU is not the 372-clock default and
-  cannot be inferred from CLK. Run with `protocol=T=0`; the decoder recovers the ETU from the DATA line via edge
-  counting, locks it, and decodes with the drift-immune edge-list bit reader.
-  T=0 case 3/4 commands (e.g. `80 12`/`80 14` STK envelope) are consolidated
-  into a single command→response APDU. A 2-sample start-bit deglitch eliminates
-  sub-ETU LOW glitches caused by FX2LP internal pull-up artifacts, preventing
-  byte misalignment on fast phone traces.
-
-### Proven data rates and ETUs
-
-All traces decoded at **16 MHz sample rate**, 0 garbage, RESULT: OK.
-Since v1.5.0 every example trace also reports **0 CONCAT** (the invalid-INS
-re-frame eliminated the last multi-exchange swallow family on
-4gmodem/A55_sim2/S21p_sim2).
-
-| Trace | CLK mode | ETU (samples) | CLK/ETU | Convention | Notes |
-|-------|----------|---------------|---------|------------|-------|
-| test_8 | constant | ~43 | 372 (standard) | Direct | PC/SC reader, ATR+PPS+APDUs |
-| test_7 | constant | ~43 | 372 (standard) | Direct | PC/SC reader, warm resets |
-| xiaomi | gated/stopped | ~53 | recovered from DATA | Direct | Phone, mid-session |
-| samsung | gated/stopped | ~72 | 16 (F=512/D=32) | Direct | Phone, non-standard F/D, STK menu |
-| alcor_reader | constant | ~53 | 16 (F=512/D=32) | Direct | PC/SC reader, CLK 4.0 MHz at ATR -> 4.8 MHz after PPS |
-
-The decoder auto-detects the ETU from the trace and selects the appropriate
-bit reader (CLK-sync for constant CLK, edge-list for gated/stopped CLK).
-No manual configuration is needed beyond `clock_option=native` and
-`protocol=T=0` for phone captures.
+  whole session.  Validate it against the reader SDK with
+  `tools/vs_reader.py <reader-log>.log out.pcap`.
+- **Phone / gated or stopped-CLK capture** — the phone gates or stops CLK
+  between transfers (Clock Stop Mode), so the ETU cannot be derived from CLK.
+  Run with `protocol=T=0`; the decoder recovers the ETU from the DATA line and
+  decodes with the edge-list reader.  T=0 case 3/4 commands (e.g. `80 12`/`80 14`
+  STK envelopes) are consolidated into one command→response APDU.
 
 Recommended invocations:
 
@@ -601,6 +454,26 @@ sigrok-cli -i <phone>.sr \
   -P iso7816:clk=CLK:data=DATA:rst=RST:clock_option=native:rst_detect=true:vcc_detect=false:protocol=T=0:gsmtap_enable=false:pcap_file=out.pcap \
   -A iso7816
 ```
+
+### Data rates and ETUs
+
+Reference values observed on the example captures at a 16 MHz samplerate:
+
+| Trace | CLK mode | ETU (samples) | CLK/ETU | Convention | Notes |
+|-------|----------|---------------|---------|------------|-------|
+| test_8 | constant | ~43 | 372 (standard) | Direct | PC/SC reader, ATR+PPS+APDUs |
+| test_7 | constant | ~43 | 372 (standard) | Direct | PC/SC reader, warm resets |
+| xiaomi | gated/stopped | ~53 | recovered from DATA | Direct | Phone, mid-session |
+| samsung | gated/stopped | ~72 | 16 (F=512/D=32) | Direct | Phone, non-standard F/D, STK menu |
+| alcor_reader | constant | ~53 | 16 (F=512/D=32) | Direct | PC/SC reader, CLK 4.0 MHz at ATR -> 4.8 MHz after PPS |
+
+The decoder auto-detects the ETU and selects the bit reader (CLK-sync for
+constant CLK, edge-list for gated/stopped CLK).  No manual configuration is
+needed beyond `clock_option=native` and `protocol=T=0` for phone captures.
+
+Parity is **even** per TS 102 221 ("an even number of bits set to '1'
+including the parity bit"); frames failing the check are flagged as
+`CHKSUM ERROR` but still decoded.
 
 ## License
 
