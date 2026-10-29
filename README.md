@@ -2,7 +2,7 @@
 
 English | [Русский](README_RUS.md)
 
-📢 Project news and updates: [website](https://atroshin.ru) · [Telegram channel](https://t.me/youeyeseesee)
+📢 Project news and updates: [website](https://sim-tools.ru) · [Telegram channel](https://t.me/youeyeseesee)
 
 Fork of [svenso/sigrok_iso7816](https://github.com/svenso/sigrok_iso7816) with
 **live GSMTAP UDP streaming**, making a cheap FX2 logic analyzer (Saleae clone)
@@ -466,7 +466,7 @@ including the parity bit"); frames failing the check are flagged as
 
 SIMple, SIMtrace Analyser and sigrok_iso7816_stream are three standalone
 tools for working with SIM/UICC cards, published together on the same
-[website](https://atroshin.ru) and [news channel](https://t.me/youeyeseesee).
+[website](https://sim-tools.ru) and [news channel](https://t.me/youeyeseesee).
 Each one is fully independent — install only the tools you need:
 
 - **[SIMple](https://github.com/anttro/simple)** — a UICC workbench: APDU
