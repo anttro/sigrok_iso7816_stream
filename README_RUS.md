@@ -5,8 +5,8 @@
 📢 Новости и обновления проекта: [сайт](https://sim-tools.ru) · [Telegram-канал](https://t.me/youeyeseesee)
 
 Форк [svenso/sigrok_iso7816](https://github.com/svenso/sigrok_iso7816) с
-**живым GSMTAP-UDP-стримингом**: дешёвый логический анализатор FX2 (клон
-Saleae) ведёт себя как сниффер SIMtrace2:
+**живым GSMTAP-UDP-стримингом**: самый простой и дешёвый способ трейсинга
+трафика ISO 7816 с помощью логического анализатора FX2 (клон Saleae):
 
 ![Путь сигнала: SIM-карта и устройство с пассивным съёмом с контактов, логический анализатор FX2 (fx2lafw, 8 каналов, до 24 МГц), sigrok-cli с декодером iso7816, GSMTAP UDP :4729, SIMtrace Analyser и Wireshark](resources/diagram_ru.svg)
 
