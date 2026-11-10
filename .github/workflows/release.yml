@@ -14,6 +14,10 @@ concurrency:
 
 jobs:
   release:
+    # GitHub-only: the release is published on GitHub (gh CLI + GITHUB_TOKEN),
+    # and the Gitea mirror's runner cannot run actions/setup-python@v5.  On
+    # Gitea this job is skipped instead of failing.
+    if: github.server_url == 'https://github.com'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
