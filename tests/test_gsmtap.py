@@ -230,6 +230,124 @@ class TestEtuCandidate(unittest.TestCase):
         self.assertEqual(etu, 100)
         self.assertTrue(ok)
 
+    def test_non_recurring_minimum_is_rejected(self):
+        # Live Redmi Note 10 swap burst: no spacing recurs 3x, so the lone
+        # 276-sample noise pulse must not be committed as the ETU (it became
+        # clock_skip 83).  The old _robust_min fallback returned the raw
+        # minimum.
+        spacings = [2480, 1240, 1240, 2480, 276, 734]
+        self.assertIsNone(self.inst._robust_min(spacings))
+        pairs = [(s, i % 2) for i, s in enumerate(spacings)]
+        self.assertEqual(self.inst._etu_candidate(pairs), (None, False))
+
+    def test_recurring_minimum_is_still_committed(self):
+        # A real bit period recurs often (see test_normal_burst_is_accepted);
+        # the >=3x rule itself is unchanged.
+        self.assertEqual(self.inst._robust_min([900, 100, 100, 500, 100]),
+                         100)
+        self.assertIsNone(self.inst._robust_min([500, 700]))
+
+
+class TestEtuRatePlausibility(unittest.TestCase):
+    """_derive_clock_skip_from_etu() only commits a plausible F/D quotient
+    (ISO 7816-3 8.3 Tables 7/8) -- a stale samples-per-clock or a noise ETU
+    must not lock the CLK-sync reader at an impossible rate."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.gs, cls.pd = _load_iso7816()
+
+    def setUp(self):
+        self.inst = object.__new__(self.pd.Decoder)
+        self.inst.reset()
+        self.inst.log = lambda *a, **k: None
+        self.inst._etu_measured = True
+
+    def _derive(self, bit_samples, spc):
+        self.inst.bit_samples = bit_samples
+        self.inst._samples_per_clock = spc
+        return self.inst._derive_clock_skip_from_etu()
+
+    def test_plausible_set_membership(self):
+        plausible = self.pd.Decoder.plausible_clock_skips()
+        # 372 (default), 16/32/64 (512/32, 512/16, 512/8) are real F/D
+        # quotients; 83 and 465 are not (465 = 1860/4 is table-legal but
+        # slower than the default and no corpus card runs it).
+        for q in (372, 64, 32, 16, 93, 186, 512 // 64):
+            self.assertIn(q, plausible, q)
+        for q in (83, 465, 930, 371, 0):
+            self.assertNotIn(q, plausible, q)
+
+    def test_rejects_stale_spc_quotient_465(self):
+        # bit_samples 1550 at the stale 3.333 samples/CLK of a 4.8 MHz
+        # pre-activation burst -> 465, impossible for a 372-rate ATR.
+        self.assertFalse(self._derive(1550, 3.3333333333333335))
+        self.assertFalse(self.inst._clock_skip_confident)
+
+    def test_rejects_noise_quotient_83(self):
+        # 276 samples / 3.333 = 83 (the noise minimum committed as the ETU).
+        self.assertFalse(self._derive(276, 3.3333333333333335))
+        self.assertFalse(self.inst._clock_skip_confident)
+
+    def test_accepts_372_16_32_64(self):
+        for spc, etu in ((3.3333333333333335, 1240),   # 4.8 MHz CLK, F/D 372
+                         (3.3333333333333335, 53),     # F/D 16
+                         (3.3333333333333335, 107),    # F/D 32
+                         (3.3333333333333335, 213),    # F/D 64
+                         (4.166666666666667, 1550)):   # 3.84 MHz CLK, F/D 372
+            with self.subTest(etu=etu, spc=spc):
+                self.inst._clock_skip_confident = False
+                self.assertTrue(self._derive(etu, spc))
+                self.assertTrue(self.inst._clock_skip_confident)
+
+    def test_measurement_noise_snaps_to_372(self):
+        # Live test_8: ETU 1237 / 3.333 = 371.1 is the 372 default within
+        # one CLK edge of measurement noise.
+        self.assertTrue(self._derive(1237, 3.3333333333333335))
+        self.assertEqual(self.inst.clock_skip, 372)
+
+    def test_no_measurement_never_commits(self):
+        self.inst._etu_measured = False
+        self.assertFalse(self._derive(1240, 3.3333333333333335))
+        self.assertFalse(self.inst._clock_skip_confident)
+
+
+class TestConfirmEtu(unittest.TestCase):
+    """_confirm_etu() ignores idle 0x00/0xFF bytes: both are parity-clean at
+    ANY sampling rate, so they cannot confirm (or disprove) an ETU."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.gs, cls.pd = _load_iso7816()
+
+    def setUp(self):
+        self.inst = object.__new__(self.pd.Decoder)
+        self.inst.reset()
+        self.inst.log = lambda *a, **k: None
+        self.inst.bit_samples = 1240
+        self.inst._etu_measured = True
+
+    def test_idle_bytes_do_not_confirm(self):
+        for b in (0x00, 0xFF):
+            for _ in range(6):
+                self.inst._confirm_etu(True, b)
+        self.assertEqual(self.inst._etu_confirm_count, 0)
+        self.assertFalse(self.inst._clock_skip_confident)
+
+    def test_data_bytes_still_confirm(self):
+        for _ in range(3):
+            self.inst._confirm_etu(True, 0x3B)
+        self.assertEqual(self.inst._etu_confirm_count, 3)
+        self.assertTrue(self.inst._clock_skip_confident)
+
+    def test_idle_bytes_with_bad_parity_still_count_as_failures(self):
+        # A mis-sampled idle byte has bad parity -- that IS evidence the
+        # rate is wrong, so the invalidation path must still run.
+        for _ in range(2):
+            self.inst._confirm_etu(False, 0xFF)
+        self.assertIsNone(self.inst.bit_samples)
+        self.assertFalse(self.inst._etu_measured)
+
 
 class TestInverseConvention(unittest.TestCase):
     """ISO 7816-3 7.1: inverse = inverted data, msb first; the start bit
@@ -400,11 +518,13 @@ class TestSamplerateScaling(unittest.TestCase):
         inst = object.__new__(self.pd.Decoder)
         inst.samplerate = 96000000
         # 12-sample spacings are sub-ETU glitches at 96 MHz (floor 72).
-        self.assertEqual(inst._etu_candidate([(12, 0), (12, 1)]),
-                         (None, False))
+        # The burst recurs (3 identical spacings): the v1.9.9 _robust_min
+        # no longer commits a non-recurring spacing, so a mere pair would
+        # be rejected at any rate.
+        burst = [(12, 0), (12, 1), (12, 0), (12, 1)]
+        self.assertEqual(inst._etu_candidate(burst), (None, False))
         inst.samplerate = 16000000
-        self.assertEqual(inst._etu_candidate([(12, 0), (12, 1)]),
-                         (12, True))
+        self.assertEqual(inst._etu_candidate(burst), (12, True))
 
 
 class TestValidateT0Apdu(unittest.TestCase):
@@ -1348,6 +1468,46 @@ class TestDecodeStep(_DataHarness, unittest.TestCase):
         self.assertEqual(inst.emitted,
                          [(bytes.fromhex('00b0000000' + payload + '9000'), 0)])
 
+    def test_rst_rearm_at_the_boundary_abandons_the_exchange(self):
+        # ISO 7816-3 6.2.3: the interface device may warm reset the card at
+        # any time.  The assert is serviced inside the boundary line_events()
+        # call and re-arms the hunt (state -> FIND START); the exchange must
+        # not start on the previous card's leftovers (the live swap consumed
+        # card B's whole ATR as the zombie exchange's response bytes).
+        seq = bytes.fromhex('00a40004023f009000')
+        inst = self._make(seq)
+        inst.track_rst = True
+
+        def rearm(pins):
+            inst.state = 'FIND START'
+            return True
+
+        inst.line_events = rearm
+        self.assertTrue(inst.decode_step())
+        self.assertEqual(inst.emitted, [])
+        self.assertEqual(inst.state, 'FIND START')
+        # Nothing was consumed: the hunt starts from the same byte.
+        self.assertEqual(bytes(inst._bytes), seq)
+
+    def test_exchange_helpers_abort_outside_data(self):
+        # The T=0 response readers stop before consuming a byte when the
+        # state left DATA (an RST re-arm landed mid-exchange).
+        inst = self._make(bytes.fromhex('01029000'))
+        inst.state = 'FIND START'
+        packet = []
+        self.assertFalse(inst._t0_read_data_until_sw(packet))
+        self.assertFalse(inst._t0_read_response_data(packet, 0xA4))
+        self.assertEqual(packet, [])
+        self.assertEqual(bytes(inst._bytes), bytes.fromhex('01029000'))
+
+    def test_exchange_aborted_predicate(self):
+        inst = self._make([])
+        self.assertFalse(inst._exchange_aborted())
+        for st in ('FIND START', 'ATR'):
+            with self.subTest(state=st):
+                inst.state = st
+                self.assertTrue(inst._exchange_aborted())
+
 
 class _AtrHarness:
     """Scripted-byte harness for handle_atr() (hunt handoff, TA1/parity)."""
@@ -1605,6 +1765,177 @@ class TestAtrInterfaceParityAndTa1(_AtrHarness, unittest.TestCase):
         self.assertIsNone(inst.ta1_clock_skip(0x93))      # 512/4  = 128
         self.assertEqual(inst.ta1_clock_skip(0x00), 372)  # 372/1 (default)
         self.assertEqual(inst.ta1_clock_skip(0xF1), 372)  # RFU Fi -> 372/1
+
+
+class TestAtrRemeasuresClock(_AtrHarness, unittest.TestCase):
+    """A fresh ATR is a session boundary: the samples-per-clock may have
+    changed with the CLK frequency (ISO 7816-3 5.2.3), so handle_atr()
+    re-measures it instead of reusing the previous card's value."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.gs, cls.pd = _load_iso7816()
+
+    def test_stale_period_is_remeasured_at_the_atr(self):
+        inst = self._make([0x3B, 0x10, 0x95])     # TS, T0 (TA1), TA1
+        inst._samples_per_clock = 3.3333333333333335   # 4.8 MHz pre-activation
+        inst._etu_measured = False
+        inst.bit_samples = None
+        measured = []
+
+        def measure():
+            measured.append(True)
+            inst._samples_per_clock = 4.166666666666667   # card A at 3.84 MHz
+            return True
+
+        inst._measure_clock_period = measure
+        inst.handle_atr(None)
+        self.assertEqual(len(measured), 1)
+        self.assertAlmostEqual(inst._samples_per_clock, 4.166666666666667)
+        # The sample-domain ETU follows the new period (372 * 4.167 = 1550,
+        # not the stale 372 * 3.333 = 1240).
+        self.assertEqual(inst.bit_samples, int(372 * 4.166666666666667))
+
+    def test_atr_clears_the_pending_remeasure(self):
+        # handle_atr() performs the boundary measurement itself; the flag set
+        # by the RST assert / an accepted PPS must not measure again inside
+        # the first ATR character.
+        inst = self._make([0x3B, 0x10, 0x95])
+        inst._clk_remeasure_pending = True
+        inst._measure_clock_period = lambda: True
+        inst.handle_atr(None)
+        self.assertFalse(inst._clk_remeasure_pending)
+
+
+class TestResetBoundary(unittest.TestCase):
+    """The RST assert is a session boundary: the new card must be able to
+    re-lock its own ETU, and a queued start bit from the old session must not
+    leak into the fresh ATR hunt."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.gs, cls.pd = _load_iso7816()
+
+    def _decoder(self):
+        inst = object.__new__(self.pd.Decoder)
+        inst.reset()
+        inst.track_rst = True
+        inst.track_vcc = False
+        inst.vcc_min_gap = 0          # report the level change immediately
+        inst.last_rst = 1
+        inst.out_ann = 0
+        inst.put = lambda *a, **k: None
+        inst.log = lambda *a, **k: None
+        inst.emit_packet = lambda *a, **k: None
+        inst.samplenum = 1000
+        return inst
+
+    def _assert_rst(self, inst):
+        # CLK, DATA, RST, VCC: RST low.
+        return inst.line_events([1, 1, 0, 1])
+
+    def test_rst_assert_resets_the_etu_confirmation(self):
+        # _etu_confirm_count stays at 3 after an ATR/ETU lock and
+        # _confirm_etu() early-returns at 3 forever, so the next card could
+        # never re-lock its rate (the swap capture stayed pinned at 1240 on a
+        # 53.3-ETU line).
+        inst = self._decoder()
+        inst._etu_confirm_count = 3
+        inst._etu_fail_count = 2
+        inst.clock_skip = 16
+        inst.bit_samples = 53
+        inst._etu_measured = True
+        inst.state = 'DATA'
+        self.assertTrue(self._assert_rst(inst))
+        self.assertEqual(inst._etu_confirm_count, 0)
+        self.assertEqual(inst._etu_fail_count, 0)
+        self.assertEqual(inst.clock_skip, 372)
+        self.assertIsNone(inst.bit_samples)
+        self.assertFalse(inst._etu_measured)
+        self.assertEqual(inst.state, 'FIND START')
+        self.assertTrue(inst._clk_remeasure_pending)
+        # ISO 7816-3 8.1: the fresh ATR runs at 372 CLK/bit, so the CLK-sync
+        # reader is trustworthy again.
+        self.assertTrue(inst._clock_skip_confident)
+
+    def test_rst_assert_drops_a_queued_start_bit(self):
+        inst = self._decoder()
+        inst._start_fall = 4242
+        self._assert_rst(inst)
+        self.assertIsNone(inst._start_fall)
+
+    def test_rst_assert_counts_as_progress(self):
+        # The step that services the assert may end at the same sample (the
+        # in-flight exchange is abandoned); _at_eof() must not mistake the
+        # session boundary for end-of-capture.
+        inst = self._decoder()
+        inst._last_sn = inst.samplenum
+        self._assert_rst(inst)
+        self.assertNotEqual(inst._last_sn, inst.samplenum)
+
+
+class TestStartFallReuse(unittest.TestCase):
+    """read_first_byte() reuses a start bit found by the ETU measurement
+    instead of re-hunting past it (the RST re-arm can land between the fall
+    and the hunt)."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.gs, cls.pd = _load_iso7816()
+
+    def test_queued_start_fall_is_reused(self):
+        inst = object.__new__(self.pd.Decoder)
+        inst.reset()
+        inst._start_fall = 1234
+        calls = []
+        inst.wait_data_falling = lambda: calls.append('wait')
+        inst.read_byte_no_wait = lambda: 0x3B
+        self.assertEqual(inst.read_first_byte(), 0x3B)
+        self.assertEqual(calls, [])
+
+    def test_no_queued_start_fall_hunts(self):
+        inst = object.__new__(self.pd.Decoder)
+        inst.reset()
+        inst._start_fall = None
+        calls = []
+
+        def wdf():
+            calls.append('wait')
+            inst._start_fall = 99
+
+        inst.wait_data_falling = wdf
+        inst.read_byte_no_wait = lambda: 0x3B
+        self.assertEqual(inst.read_first_byte(), 0x3B)
+        self.assertEqual(calls, ['wait'])
+
+
+class TestMeasureEtuAbort(unittest.TestCase):
+    """_measure_etu() abandons the burst when a line event re-armed the
+    decoder while it waited for the start bit (the burst then belongs to the
+    next session/card, e.g. a fresh ATR)."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.gs, cls.pd = _load_iso7816()
+
+    def test_rearm_while_waiting_abandons_the_burst(self):
+        inst = object.__new__(self.pd.Decoder)
+        inst.reset()
+        inst.state = 'DATA'
+        inst._start_fall = None
+        inst.samplenum = 0
+        inst.log = lambda *a, **k: None
+
+        def wdf():
+            inst.state = 'FIND START'     # what the RST assert handler does
+            inst._start_fall = 1234
+
+        inst.wait_data_falling = wdf
+        inst._measure_etu()
+        self.assertIsNone(inst.bit_samples)
+        self.assertFalse(inst._etu_measured)
+        # The start fall stays queued for the ATR hunt.
+        self.assertEqual(inst._start_fall, 1234)
 
 
 if __name__ == '__main__':

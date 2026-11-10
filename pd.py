@@ -28,7 +28,7 @@ from .gsmtap_stream import (GsmtapStreamSender,
     GSMTAP_SIM_RST_EVENT, GSMTAP_SIM_VCC_EVENT,
     GSMTAP_FLAG_BAD_FCS)
 
-VERSION = '1.9.8'
+VERSION = '1.9.9'
 
 
 
@@ -887,21 +887,58 @@ class Decoder(srd.Decoder):
                 if (emit_lvl == 0):
                     # RST asserted (LOW): card entering reset state.  A reset
                     # makes the card send its ATR at the DEFAULT ETU (372 CLK
-                    # cycles/bit), so clock_skip must be restored to 372 --
-                    # otherwise a post-PPS clock_skip (e.g. 16) would make the
-                    # decoder hunt for the fresh ATR at the wrong rate and
-                    # mis-frame every byte.  Prepare for the next ATR by
-                    # re-arming the hunt and clearing _atr_parsed so the next
-                    # RST deassert will also re-arm (first cycle at startup).
+                    # cycles/bit, ISO 7816-3 8.1), so clock_skip must be
+                    # restored to 372 -- otherwise a post-PPS clock_skip (e.g.
+                    # 16) would make the decoder hunt for the fresh ATR at the
+                    # wrong rate and mis-frame every byte.  Prepare for the
+                    # next ATR by re-arming the hunt and clearing _atr_parsed
+                    # so the next RST deassert will also re-arm (first cycle at
+                    # startup).
+                    #
+                    # The ETU confirmation state belongs to the previous card
+                    # too: _etu_confirm_count stays at 3 after an ATR/ETU
+                    # lock, and _confirm_etu() early-returns forever at 3, so
+                    # the next card could never re-lock its own rate (the
+                    # swap capture stayed pinned at 1240 on a 53.3-ETU line).
                     self._atr_parsed = False
                     self._inverse_convention = False
                     self.clock_skip = 372
                     self.bit_samples = None
                     self._etu_measured = False
+                    self._etu_confirm_count = 0
+                    self._etu_fail_count = 0
                     self._apdu_seen = False
                     self.state = 'FIND START'
                     self._atr_hunt_count = 0
                     self._pps_attempted = False
+                    # A queued start bit belongs to the old session; the
+                    # fresh ATR must be hunted from the reset boundary.
+                    self._start_fall = None
+                    # The fresh ATR is sent at the default rate (ISO 7816-3
+                    # 8.1: "The etu initially used by the card shall be equal
+                    # to 372 clock cycles"), so the CLK-sync reader is
+                    # trustworthy again even though a mid-session capture
+                    # never confirmed clock_skip.  The samples-per-clock is
+                    # re-measured inside the first character (see the pending
+                    # flag below), so a reset that changes the CLK frequency
+                    # is followed too.  The "give up hunting" path drops the
+                    # confidence again when it resumes T=0 framing without an
+                    # ATR.
+                    self._clock_skip_confident = \
+                        not (self.sample_as_clock or self.detect_clock)
+                    # ISO 7816-3 5.2.3: the CLK frequency may change at a
+                    # reset/activation boundary.  Mirror handle_pps: the first
+                    # post-reset character re-measures samples-per-clock (CLK
+                    # runs for the whole character).  handle_atr also measures
+                    # at the ATR itself and clears this flag, so the two
+                    # paths never measure twice.
+                    if not (self.sample_as_clock or self.detect_clock):
+                        self._clk_remeasure_pending = True
+                    # The decode step that serviced this assert may end at
+                    # the same sample (the in-flight exchange is abandoned);
+                    # count it as progress so _at_eof() does not mistake the
+                    # session boundary for end-of-capture.
+                    self._last_sn = -1
                 if (emit_lvl == 1):
                     # RST deasserted (HIGH): card released from reset and
                     # will send a fresh ATR.  However, the 10ms hysteresis
@@ -937,8 +974,15 @@ class Decoder(srd.Decoder):
                             self._etu_fail_count = 0
                             self.clock_skip = 372
                             self._inverse_convention = False
+                            self._start_fall = None
                             self._clock_skip_confident = \
                                 not (self.sample_as_clock or self.detect_clock)
+                            # Same boundary rule as the assert handler: the
+                            # CLK frequency may change at the reset
+                            # (ISO 7816-3 5.2.3); handle_atr's own measurement
+                            # runs first and clears the flag.
+                            if not (self.sample_as_clock or self.detect_clock):
+                                self._clk_remeasure_pending = True
                             self.log("RST deasserted with no hunt armed; re-arming ATR hunt")
                         else:
                             self.log("RST deasserted (hunt/ATR already in progress)")
@@ -1026,8 +1070,16 @@ class Decoder(srd.Decoder):
         '''Find the first start-bit falling edge and read the first byte with
         the standard re-anchored reader.  (Mid-session ETU recovery is done by
         _measure_etu, called once from the mid-session branch of decode_step
-        before the normal T=0/T=1 framing state machine takes over.)'''
-        self.wait_data_falling()
+        before the normal T=0/T=1 framing state machine takes over.)
+
+        A start bit already queued by _measure_etu/_read_byte_edges is
+        reused: the ETU measurement may have found the very start bit the
+        ATR hunt needs (the RST assert/re-arm can land between the fall and
+        this call), and re-hunting would skip that first character -- on the
+        Redmi Note 10 swap capture it skipped card A's TS (the ATR then
+        decoded from T0 and was rejected).'''
+        if self._start_fall is None:
+            self.wait_data_falling()
         return self.read_byte_no_wait()
 
     def _measure_clock_period(self):
@@ -1108,6 +1160,51 @@ class Decoder(srd.Decoder):
             return skip
         return None
 
+    _PLAUSIBLE_CLOCK_SKIPS = None
+
+    @classmethod
+    def plausible_clock_skips(cls):
+        '''The CLK-edges-per-bit (F/D) values the ETU derivation may commit.
+
+        ISO 7816-3 §8.3 Tables 7/8 code Fi in {372, 558, 744, 1116, 1488,
+        1860, 512, 768, 1024, 1536, 2048} and Di in {1, 2, 4, 8, 12, 16, 20,
+        32, 64} (the same clock_rate/baud_rate maps handle_pps and
+        ta1_clock_skip use); only their integral quotients are real F/D
+        values, so a derived clock_skip outside this set is a measurement
+        error, never a rate.
+
+        The set is capped at the 372 default.  A rate slower than 372 is
+        table-legal (e.g. Fi 1860 / Di 4 = 465) but the ATR is always sent at
+        372 (§8.1) and every PPS in the corpus negotiates an equal or faster
+        rate; a card that really ran slower would simply keep the
+        sample-domain edge reader, which is correct regardless of clock_skip
+        -- so the cap is a safe, conservative gate for a mid-session capture
+        whose samples-per-clock may be stale (a stale 3.333 samples/CLK from
+        a 4.8 MHz pre-activation burst derived 465 on the Redmi Note 10 swap
+        capture while the card actually ran at 372).'''
+        if cls._PLAUSIBLE_CLOCK_SKIPS is None:
+            cls._PLAUSIBLE_CLOCK_SKIPS = frozenset(
+                fi // di
+                for fi in cls.clock_rate.values()
+                for di in cls.baud_rate.values()
+                if di and fi % di == 0 and fi // di <= 372)
+        return cls._PLAUSIBLE_CLOCK_SKIPS
+
+    @classmethod
+    def _plausible_clock_skip(cls, cs):
+        '''The plausible F/D quotient nearest to cs, or None.
+
+        One edge of slack absorbs the measurement noise between an integer
+        ETU in samples and an averaged samples-per-clock (live test_8: the
+        ETU 1237 / 3.333 = 371.1 is the 372 default).'''
+        best = None
+        best_d = None
+        for q in sorted(cls.plausible_clock_skips()):
+            d = abs(cs - q)
+            if d <= 1 and (best_d is None or d < best_d):
+                best, best_d = q, d
+        return best
+
     def _derive_clock_skip_from_etu(self):
         '''Derive clock_skip (CLK edges per ETU) from the recovered ETU.
 
@@ -1118,18 +1215,32 @@ class Decoder(srd.Decoder):
         CLK cycle), clock_skip = bit_samples / _samples_per_clock.  Only a
         real DATA measurement is trusted (_etu_measured); a failed or
         rejected measurement never commits a rate.  A later parity failure
-        invalidates it (_confirm_etu).'''
+        invalidates it (_confirm_etu).
+
+        The quotient must be a plausible F/D value (see
+        plausible_clock_skips()).  An implausible one means the ETU or the
+        samples-per-clock is wrong (a stale samples-per-clock carried over a
+        card swap, or a noise minimum committed as the ETU); committing it
+        would mis-time every byte, so the CLK-sync reader stays disabled and
+        the sample-domain edge reader (bit_samples, which remains correct)
+        keeps decoding.'''
         if (self._etu_measured and self._samples_per_clock
                 and self.bit_samples):
             cs = int(round(float(self.bit_samples) / float(self._samples_per_clock)))
-            if cs >= 1:
-                if cs != self.clock_skip:
-                    self.log("clock_skip recovered from ETU:", cs,
-                             "(bit_samples", self.bit_samples,
-                             "/ spc", self._samples_per_clock, ")")
-                self.clock_skip = cs
-                self._clock_skip_confident = True
-                return True
+            skip = self._plausible_clock_skip(cs) if cs >= 1 else None
+            if skip is None:
+                self.log("clock_skip implausible, staying on the edge reader:",
+                         cs, "(bit_samples", self.bit_samples,
+                         "/ spc", self._samples_per_clock, ")")
+                self._clock_skip_confident = False
+                return False
+            if skip != self.clock_skip:
+                self.log("clock_skip recovered from ETU:", skip,
+                         "(bit_samples", self.bit_samples,
+                         "/ spc", self._samples_per_clock, ")")
+            self.clock_skip = skip
+            self._clock_skip_confident = True
+            return True
         return False
 
     def _etu_candidate(self, pairs):
@@ -1159,6 +1270,10 @@ class Decoder(srd.Decoder):
             return (None, False)
         spacings = [p[0] for p in valid]
         etu = self._robust_min(spacings)
+        if etu is None:
+            # No spacing recurs (>=3x): an unrepeatable minimum proves
+            # nothing, so do not commit the raw minimum as the ETU.
+            return (None, False)
         guard_dominated = (
             all(lvl == 1 for sp, lvl in valid if sp == etu)
             and all(sp >= 2 * etu for sp, lvl in valid if sp != etu))
@@ -1185,9 +1300,18 @@ class Decoder(srd.Decoder):
         mis-framed -- expected for a mid-session capture).'''
         if self.bit_samples is not None and self._etu_confirm_count >= 3:
             return
+        entry_state = self.state
         if self._start_fall is None:
             self.wait_data_falling()
         if self._eof or self._start_fall is None:
+            return
+        if self.state != entry_state:
+            # A line event serviced by wait_data_falling (an RST assert)
+            # re-armed the decoder while waiting for the start bit: the burst
+            # ahead belongs to the next session/card, not to the traffic this
+            # measurement was started for.  Abandon it instead of consuming
+            # the fresh ATR as ETU evidence (Redmi Note 10 swap: the assert
+            # fired here and the measurement ate the first ATR characters).
             return
         e0 = self._start_fall
         self._start_fall = None  # consumed; framing re-waits on its own
@@ -1284,13 +1408,22 @@ class Decoder(srd.Decoder):
             return 'retry'
         return 'resume_data'
 
-    def _confirm_etu(self, parity_ok):
+    def _confirm_etu(self, parity_ok, byte=None):
         '''Validate ETU measurement after _measure_etu.  Call after each byte
-        decode in _read_byte_edges.  After 3 successful decodes the
+        decode in both readers.  After 3 successful decodes the
         measurement is locked.  If 2 consecutive parity errors occur before
         validation, the measurement is discarded and re-measured from the
-        next burst.'''
+        next burst.
+
+        An idle byte (0x00 / 0xFF) proves nothing about the ETU: it has even
+        parity (no ones / eight ones) no matter how badly the sampling rate
+        is wrong, so a mis-timed read of the idle line always "passes".  Only
+        a byte with bit transitions is evidence that the ETU is right; idle
+        bytes are ignored (neither a confirmation nor a failure).'''
         if self._etu_confirm_count >= 3:
+            return
+        if parity_ok and byte is not None and byte in (0x00, 0xFF):
+            # Idle byte: no evidence either way (see above).
             return
         if parity_ok:
             self._etu_confirm_count += 1
@@ -1315,7 +1448,11 @@ class Decoder(srd.Decoder):
     def _robust_min(self, spacings):
         '''Smallest spacing that recurs (>=3x): the true etu.  Two
         consecutive differing bits produce a 1-etu gap, so a real bit period
-        recurs often; a glitch is unique.  Falls back to the raw minimum.
+        recurs often; a glitch is unique.  Returns None when NO spacing
+        recurs: a burst without a recurring period proves nothing about the
+        bit rate, and committing its raw minimum locks a lone noise pulse as
+        the ETU (live Redmi Note 10 swap: spacings
+        [2480, 1240, 1240, 2480, 276, 734] committed 276 -> clock_skip 83).
 
         Spacings below MIN_ETU (12 samples at 16 MHz) are rejected as
         metastability glitches — they are too short for any valid ISO 7816
@@ -1327,9 +1464,9 @@ class Decoder(srd.Decoder):
         for v in sorted(c):
             if c[v] >= 3:
                 return v
-        # Fallback: accept any spacing >= MIN_ETU, or raw min if nothing qualifies.
-        valid = [s for s in spacings if s >= MIN_ETU]
-        return min(valid) if valid else min(spacings)
+        # No recurrence: nothing to commit.  (The old fallback to the raw
+        # minimum made an unrepeatable noise pulse the bit period.)
+        return None
 
     def _deglitch_edges(self, edges, bs):
         '''Remove pulses shorter than a fraction of an ETU from an edge list.
@@ -1513,9 +1650,9 @@ class Decoder(srd.Decoder):
             self.log(self.samplenum, "CHKSUM ERROR: ", 0, "bits: ", self.bits)
             self.put(self.ss, self.samplenum, self.out_ann,
                      [0, ["CHKSUM ERROR bits={bits}".format(bits=self.bits)]])
+        byte = self.get_bytes(self.bits[1:9]) if self.bits else 0
         if self.bit_samples is not None and self.bits:
-            self._confirm_etu(parity_ok)
-        byte = self.get_bytes(self.bits[1:9])
+            self._confirm_etu(parity_ok, byte)
         # Stuck-line watchdog (same as the other readers).
         if (sum(self.bits) == 0):
             self.zero_run += 1
@@ -1557,6 +1694,17 @@ class Decoder(srd.Decoder):
         e0 = self._start_fall
         self._start_fall = None
         self.ss = e0
+        if self._clk_remeasure_pending:
+            # A reset or PPS boundary may have changed the CLK frequency
+            # (ISO 7816-3 5.2.3); re-measure it inside this character, where
+            # CLK is guaranteed to run for the whole frame.  The 16 edges
+            # consumed start at the start bit (or in the inter-byte gap), so
+            # no DATA edge is missed; refresh the sample-domain ETU for this
+            # byte.  The CLK-sync reader handles the same flag itself.
+            self._clk_remeasure_pending = False
+            if self._measure_clock_period():
+                bs = self._compute_bit_samples()
+                self.bit_samples = bs
         # Collect DATA edges for this byte + the inter-byte gap.
         # Use a 15 ETU window so a 2 ETU turnaround idle (observed on
         # Samsung phone at 16 CLK/bit) still leaves the next start-bit fall
@@ -1629,7 +1777,7 @@ class Decoder(srd.Decoder):
             self.put(self.ss, self.samplenum, self.out_ann,
                      [0, ["CHKSUM ERROR bits={bits}".format(bits=self.bits)]])
         if self.bit_samples is not None:
-            self._confirm_etu(parity_ok)
+            self._confirm_etu(parity_ok, byte)
         if (sum(self.bits) == 0):
             self.zero_run += 1
             if (self.zero_run == 32):
@@ -1891,10 +2039,32 @@ class Decoder(srd.Decoder):
         # Clear any stale edge spacings; the first few ATR bytes give us the
         # most reliable ETU reference for the whole session.
         self._edge_spacings.clear()
-        # Try to lock the ETU from the actual CLK frequency before reading the
-        # first ATR byte.  This removes the hard-coded clock_skip*3 estimate.
-        if self._samples_per_clock is None:
-            self._measure_clock_period()
+        # Re-measure the CLK period at every ATR: a fresh ATR is a session
+        # boundary and the CLK frequency may have changed there.  ISO 7816-3
+        # §5.2.3: "No information shall be exchanged when switching the
+        # frequency value.  Two different times are recommended for switching
+        # the frequency value, either - after completion of an answer to
+        # reset, see 8.1, while the card is waiting for a character, or -
+        # after completion of a successful PPS exchange, see 9.3, ...", and
+        # during activation/cold reset CLK is limited to 1-5 MHz.  A period
+        # carried over from the previous card or session is therefore stale:
+        # on the Redmi Note 10 swap capture the 3.333 samples/CLK of a 4.8 MHz
+        # pre-activation probe burst was kept while card A ran at 3.84 MHz,
+        # so the ATR was read at 372*3.333 = 1240 samples instead of 1550.
+        # (The old code measured only when no period was known at all, which
+        # is exactly the case this misses.)
+        if self._measure_clock_period():
+            # The measurement consumed the first 16 CLK edges of the current
+            # character -- far less than one ETU at 372 CLK/bit, so a start
+            # bit already queued by the previous read stays usable.  Refresh
+            # the sample-domain ETU from the new period unless a real DATA
+            # measurement pins it (a table/guess value carried over from the
+            # previous card must not survive the boundary).
+            if not self._etu_measured:
+                self.bit_samples = self._compute_bit_samples()
+        # The ATR's own measurement covers the same boundary as the pending
+        # flag set by an RST assert / accepted PPS; do not measure twice.
+        self._clk_remeasure_pending = False
         # Ensure the sample-domain ETU is available for framing
         # (wait_data_falling / resync_idle) even though the CLK-sync reader
         # itself only needs clock_skip.
@@ -1986,7 +2156,9 @@ class Decoder(srd.Decoder):
                 return
             # Give up hunting for an ATR here without emitting anything;
             # resume T=0 framing from the next byte instead of inventing one.
-            # Clear bit_samples so the DATA path measures the ETU fresh.
+            # Clear bit_samples so the DATA path measures the ETU fresh, and
+            # drop the clock_skip confidence the RST assert granted for the
+            # (never received) default-rate ATR: the live rate is unknown.
             self.log("No valid ATR after {count} hunts (fails={fails}); "
                      "resuming DATA without synthetic ATR".format(
                          count=self._atr_hunt_count,
@@ -1995,6 +2167,7 @@ class Decoder(srd.Decoder):
             self._etu_measured = False
             self._etu_confirm_count = 0
             self._etu_fail_count = 0
+            self._clock_skip_confident = False
             self.hasT0 = True
             self.hasT1 = False
             self.state = 'DATA'
@@ -2472,6 +2645,25 @@ class Decoder(srd.Decoder):
             return False
         return True
 
+    def _exchange_aborted(self):
+        '''True when an in-flight T=0 exchange must be abandoned.
+
+        ISO 7816-3 §6.2.3 (Warm reset): "the interface device may warm reset
+        the card at any time, even during the answer to reset, but not before
+        reception of the mandatory characters TS and T0".  An RST assert is
+        serviced inside line_events() -- reached from every start-bit wait --
+        and re-arms the ATR hunt (state -> 'FIND START').  A decode_step that
+        only checks the state at its top would keep framing the rest of the
+        old exchange from the new card's line: on the Redmi Note 10 swap
+        capture the RST assert landed mid-exchange and the zombie data phase
+        consumed card B's whole ATR and its two PPS requests (FF 10 96 79) as
+        "response bytes", so handle_atr() was never called for card B.
+
+        The exchange helpers return True here so the partial packet (nothing
+        has been emitted yet) is dropped and the next decode_step hunts the
+        fresh ATR at the default rate (ISO 7816-3 §8.1).'''
+        return self.state != 'DATA'
+
     def _t0_read_data_until_sw(self, packet):
         '''Append every card byte until SW1 SW2, keeping the data.
 
@@ -2481,6 +2673,8 @@ class Decoder(srd.Decoder):
         ends the response; data bytes are appended verbatim.  Returns True
         when the status word was read.'''
         for _ in range(MAX_TPDU_LEN):
+            if self._exchange_aborted():
+                return False
             pb = self.read_byte()
             if pb is None:
                 return False
@@ -2505,6 +2699,8 @@ class Decoder(srd.Decoder):
         switches to _t0_read_data_until_sw().  Any other byte is response
         data.  Returns True when the status word was read.'''
         for _ in range(MAX_TPDU_LEN):
+            if self._exchange_aborted():
+                return False
             pb = self.read_byte()
             if pb is None:
                 return False
@@ -2643,6 +2839,11 @@ class Decoder(srd.Decoder):
             # are only detected here as a net level change.
             if (self.track_rst or self.track_vcc):
                 self.line_events(self.wait({'skip': 0}))
+                if self._exchange_aborted():
+                    # An RST assert inside line_events() re-armed the ATR
+                    # hunt (state -> 'FIND START'); the exchange must not
+                    # start on the previous card's leftovers.
+                    return True
 
             if not self.hasT0 and not self.hasT1:
                 bs = self.bit_samples or self._compute_bit_samples()
@@ -2728,6 +2929,13 @@ class Decoder(srd.Decoder):
                 p3 = self.read_byte()
                 if p3 is None:
                     return True
+                if self._exchange_aborted():
+                    # RST asserted while the header was being read: the
+                    # partial header belongs to the reset card.
+                    self.peeked_samplenum = es
+                    self.peeked_byte = None
+                    self._resync = True
+                    return True
                 packet.extend((bClass, bIns, p1, p2, p3))
                 # All-zero header is never a valid T=0 command.
                 if all(b == 0 for b in packet[:5]):
@@ -2797,6 +3005,12 @@ class Decoder(srd.Decoder):
                     pb0 = self.read_byte()
                     if pb0 is None:
                         return True
+                if self._exchange_aborted():
+                    # RST asserted while waiting for the procedure byte.
+                    self.peeked_samplenum = es
+                    self.peeked_byte = None
+                    self._resync = True
+                    return True
                 if plausible_sw(pb0):
                     # Immediate status word: ISO 7816-3 §10.3.3 lets the
                     # card finish the command at the first procedure
@@ -2826,6 +3040,9 @@ class Decoder(srd.Decoder):
                         resp = []
                         eof = False
                         for _ in range(p3):
+                            if self._exchange_aborted():
+                                self._resync = True
+                                return True
                             b = self.read_byte()
                             if b is None:
                                 eof = True
@@ -2895,6 +3112,9 @@ class Decoder(srd.Decoder):
                         # Case 3/4: P3 command-data bytes, then
                         # procedure byte.
                         for _ in range(max(p3 - 1, 0)):
+                            if self._exchange_aborted():
+                                self._resync = True
+                                return True
                             prev_end = self.es
                             b = self.read_byte()
                             if b is None:
@@ -2917,6 +3137,9 @@ class Decoder(srd.Decoder):
                                 return True
                             packet.append(b)
                         for _proc in range(32):
+                            if self._exchange_aborted():
+                                self._resync = True
+                                return True
                             pb = self.read_byte()
                             if pb is None:
                                 return True
