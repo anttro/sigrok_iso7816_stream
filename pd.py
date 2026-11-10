@@ -400,7 +400,8 @@ TA1_APPLICABLE_CLOCK_SKIP = (372, 64)
 
 # Maximum gap, in ETUs, tolerated inside a T=0 command-data phase.  The
 # terminal sends the header's P3 data bytes as one contiguous burst (only
-# the 12-etu guard time between characters, ISO 7816-3 7.2); ISO bounds the
+# the 12-etu guard time between characters, GT = 12 etu per ISO 7816-3 8.1);
+# ISO bounds the
 # *card*'s characters by the waiting time (WT = WI x 960 etu, 8.3/10.2) but
 # sets no bound on the interface device's own characters, so this value is a
 # decoder heuristic rather than a spec number.  It exists because a

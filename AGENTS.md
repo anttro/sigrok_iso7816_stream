@@ -1452,6 +1452,14 @@ discarded ideas.  "Proven" = kept in `pd.py`; "Rejected" = do not re-add.
   Uses F=512/D=32 (16 CLK cycles/bit).  `_measure_etu` correctly measures
   the ETU from DATA edge spacings (after glitch filtering).  Now passes
   with 0 GARBAGE and de-concatenated APDUs after v1.1.10 deglitch fix.
+- **TA1 = 0x94 (F/D = 64) followed by a PPS exchange (unobserved).**  v1.9.8
+  applies 64 straight from TA1 because the only 0x94 fixture (Redmi Note 10)
+  switches to 64 with no PPS.  A *conformant* card that announces 0x94 in
+  negotiable mode but whose terminal then PPS's at the default 372 rate would
+  be mis-framed at 64 from the first PPSS, and the locked ETU does not
+  self-heal until a warm reset.  No fixture exhibits this; a future capture
+  that does needs a parity-failure-triggered revert to 372 (or a post-ATR
+  ETU re-measure).
 
 ### v1.1.6 fix: bounded T=0 loops and explicit EOF handling
 
