@@ -333,7 +333,11 @@ Known limitation: no on-disk fixture reproduces the exact live failure (all
 real captures contain a 372 ATR), so end-to-end proof needs a re-captured
 `.sr` from the failing phone; the unit tests cover the loop-escape logic.
 
-### v1.9.9: card-swap desync — stale clock period, atomic RST re-arm, ETU sanity
+### v2.0.0: card-swap desync — stale clock period, atomic RST re-arm, ETU sanity
+
+Shipped as **2.0.0** (a major bump): v1.9.8 and v1.9.9 were developed back to
+back and neither was released individually, so this release carries both the
+v1.9.8 ATR-acceptance/TA1 change and the swap fix below.
 
 `redmi_note_10_swap_sample.sr` (a physical card swap, two cards at different
 CLK frequencies and different F/D) desynced and never recovered.  The root
@@ -402,7 +406,7 @@ from 0 ATR / 6 APDU / 4 BAD_FCS / 314 CHKSUM to **2 ATR / 412 APDU /
 0 BAD_FCS / 1 CHKSUM / RESULT OK** (both ATRs parse, both PPS accepted to
 `clock_skip 16`, `clock_skip` never commits 465 or 83).  No reader-log ground
 truth exists for the swap fixture, so its correctness rests on structural
-validity + 0 GARBAGE/BAD_FCS/CONCAT.  VERSION -> 1.9.9.
+validity + 0 GARBAGE/BAD_FCS/CONCAT.  VERSION -> 2.0.0.
 
 ### v1.9.8: ATR acceptance (interface vs historical parity) + apply TA1's F/D
 
@@ -1142,10 +1146,10 @@ append the measured CLK frequency when known
 
 ### Versioning
 
-The decoder version is defined in `pd.py` as `VERSION = '1.9.9'`.
+The decoder version is defined in `pd.py` as `VERSION = '2.0.0'`.
 The version is printed to the log on decoder startup.
 
-### Release packaging (v1.9.7)
+### Release packaging (v2.0.0)
 
 The GitHub release archives let users run the decoder without cloning the
 repo.  `./tools/build_release.sh [REF]` (REF defaults to `HEAD`) builds
@@ -1181,7 +1185,7 @@ no release yet) followed by `gh release edit --draft=false`, with
 `release-<tag>` concurrency.  The workflow prepends a standard install block
 to the generated notes: release package (recommended; Linux tar.gz / Windows
 zip, setup/start, SHA256SUMS) and source checkout (development).  **Release
-process:** commit the docs, workflow and scripts first, then tag `v1.9.7` and
+process:** commit the docs, workflow and scripts first, then tag `v2.0.0` and
 push the tag (with user approval) - the workflow must exist in the tagged
 commit, and the archive ships the committed READMEs.  The changelog itself is
 GitHub's auto-generated notes from the commits; `AGENTS.md` and `tests/` are

@@ -1,7 +1,7 @@
 === Baseline captured 2026-11-10T23:48:20+03:00 ===
 
 === test_8 ===
-('=== iso7816 decoder v1.9.9 ===',)
+('=== iso7816 decoder v2.0.0 ===',)
 ('etu recovered (samples):', 1237)
 iso7816-1: RST deasserted
 ('RST deasserted',)
@@ -36,7 +36,7 @@ Degradation metrics:
 RESULT: OK - capture fully explained (reader + CAT + valid retries)
 
 === test_7 ===
-('=== iso7816 decoder v1.9.9 ===',)
+('=== iso7816 decoder v2.0.0 ===',)
 ('etu recovered (samples):', 1236)
 iso7816-1: RST deasserted
 ('RST deasserted',)
@@ -77,7 +77,7 @@ Degradation metrics:
 RESULT: OK - capture fully explained (reader + CAT + valid retries)
 
 === xiaomi_phone_sample ===
-('=== iso7816 decoder v1.9.9 ===',)
+('=== iso7816 decoder v2.0.0 ===',)
 ('etu recovered (samples):', 53)
 (11674007, 'CHKSUM ERROR: ', 0, 'bits: ', [0, 0, 0, 1, 0, 0, 1, 1, 1, 1])
 iso7816-1: CHKSUM ERROR bits=[0, 0, 0, 1, 0, 0, 1, 1, 1, 1]
@@ -102,7 +102,7 @@ Degradation metrics:
 RESULT: OK - capture fully explained (reader + CAT + valid retries)
 
 === xiaomi_mi_a1_coldboot ===
-('=== iso7816 decoder v1.9.9 ===',)
+('=== iso7816 decoder v2.0.0 ===',)
 ('RST low at start: expecting cold-boot ATR',)
 iso7816-1: RST deasserted
 ('RST deasserted',)
@@ -129,7 +129,7 @@ Degradation metrics:
 RESULT: OK - capture fully explained (reader + CAT + valid retries)
 
 === 4gmodem_coldboot ===
-('=== iso7816 decoder v1.9.9 ===',)
+('=== iso7816 decoder v2.0.0 ===',)
 ('RST low at start: expecting cold-boot ATR',)
 iso7816-1: RST deasserted
 ('RST deasserted',)
@@ -156,7 +156,7 @@ Degradation metrics:
 RESULT: OK - capture fully explained (reader + CAT + valid retries)
 
 === alcor_reader_sample ===
-('=== iso7816 decoder v1.9.9 ===',)
+('=== iso7816 decoder v2.0.0 ===',)
 ('RST low at start: expecting cold-boot ATR',)
 iso7816-1: RST deasserted
 ('RST deasserted',)
@@ -189,7 +189,7 @@ Degradation metrics:
 RESULT: OK - capture fully explained (reader + CAT + valid retries)
 
 === samsung_A55_coldboot_new_cable ===
-('=== iso7816 decoder v1.9.9 ===',)
+('=== iso7816 decoder v2.0.0 ===',)
 ('RST low at start: expecting cold-boot ATR',)
 iso7816-1: RST deasserted
 ('RST deasserted',)
@@ -216,7 +216,7 @@ Degradation metrics:
 RESULT: OK - capture fully explained (reader + CAT + valid retries)
 
 === samsung_A55_coldboot_new_cable_sim2 ===
-('=== iso7816 decoder v1.9.9 ===',)
+('=== iso7816 decoder v2.0.0 ===',)
 ('RST low at start: expecting cold-boot ATR',)
 iso7816-1: RST deasserted
 ('RST deasserted',)
@@ -243,7 +243,7 @@ Degradation metrics:
 RESULT: OK - capture fully explained (reader + CAT + valid retries)
 
 === samsung_S21p_coldboot_new_cable ===
-('=== iso7816 decoder v1.9.9 ===',)
+('=== iso7816 decoder v2.0.0 ===',)
 ('RST low at start: expecting cold-boot ATR',)
 iso7816-1: RST deasserted
 ('RST deasserted',)
@@ -270,7 +270,7 @@ Degradation metrics:
 RESULT: OK - capture fully explained (reader + CAT + valid retries)
 
 === samsung_S21p_coldboot_new_cable_sim2 ===
-('=== iso7816 decoder v1.9.9 ===',)
+('=== iso7816 decoder v2.0.0 ===',)
 ('RST low at start: expecting cold-boot ATR',)
 iso7816-1: RST deasserted
 ('RST deasserted',)
