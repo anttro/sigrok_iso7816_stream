@@ -333,6 +333,77 @@ Known limitation: no on-disk fixture reproduces the exact live failure (all
 real captures contain a 372 ATR), so end-to-end proof needs a re-captured
 `.sr` from the failing phone; the unit tests cover the loop-escape logic.
 
+### v1.9.9: card-swap desync — stale clock period, atomic RST re-arm, ETU sanity
+
+`redmi_note_10_swap_sample.sr` (a physical card swap, two cards at different
+CLK frequencies and different F/D) desynced and never recovered.  The root
+causes were all measured from the fixture (trace-analyst), not guessed:
+
+1. **Stale `_samples_per_clock`.**  `_measure_clock_period()` ran once from a
+   pre-activation probe burst (4.8 MHz → spc 3.333), but card A runs at
+   3.84 MHz (spc 4.167).  The ATR hunt read card A's ATR at 372×3.333=1240
+   samples when the truth is 372×4.167=1550, and `_derive_clock_skip_from_etu`
+   then computed 1550/3.333=**465** instead of 372 — the CLK-sync reader
+   counted 465 edges/bit on a 372-edge stream (the 314-CHKSUM storm).
+2. **Non-atomic RST re-arm.**  The RST assert fired mid-exchange inside
+   `wait_data_falling`; `line_events` flipped `state='FIND START'` but the
+   in-flight `decode_step` kept framing a "zombie" T=0 exchange that consumed
+   card B's whole ATR + two PPS requests as response bytes (`handle_atr`
+   never ran).
+3. **Confirmation lock leak.**  `_confirm_etu` early-returned forever because
+   `_etu_confirm_count` was still 3 from card A; the RST-assert handler reset
+   everything except the confirmation counters, so card B stayed locked at
+   1240 on a 53.3-ETU line.
+4. **`_robust_min` committed a noise minimum.**  A burst with no recurring
+   spacing fell through the "raw min" fallback and committed a lone 276-sample
+   pulse (→ clock_skip 83).
+
+Fixes (each spec-cited):
+
+- **Re-measure `_samples_per_clock` at session boundaries.**  `handle_atr()`
+  re-runs `_measure_clock_period()` unconditionally (a fresh ATR is a session
+  boundary — ISO 7816-3 §5.2.3: the CLK frequency may be switched "after
+  completion of an answer to reset, see 8.1" or "after completion of a
+  successful PPS exchange, see 9.3"); the RST assert/deassert handlers set
+  `_clk_remeasure_pending` (mirroring `handle_pps`), consumed by both readers.
+- **Plausible F/D gate.**  `_derive_clock_skip_from_etu()` accepts only a
+  quotient in the Fi/Di set (ISO 7816-3 §8.3 Tables 7/8), ±1 edge of noise;
+  an implausible value (83, 465) logs `clock_skip implausible, staying on the
+  edge reader` and clears `_clock_skip_confident` instead of committing it.
+  **Policy caveat (not a spec prohibition):** the set is capped at 372, so a
+  table-legal slow rate (e.g. 1860/4=465) is rejected too; that only keeps
+  the sample-domain edge reader, which is correct regardless.
+- **Atomic RST re-arm.**  `_exchange_aborted()` (ISO 7816-3 §6.2.3: "the
+  interface device may warm reset the card at any time, even during the
+  answer to reset") re-checks `state != 'DATA'` after the boundary
+  `line_events` and at the top of every T=0 framing read (header / procedure
+  byte / P3 response / command data / data-until-SW loops); the partial
+  packet is abandoned before emission and the next `decode_step` re-dispatches.
+- **Confirmation reset on RST assert.**  `_etu_confirm_count`/`_etu_fail_count`
+  reset to 0 next to the other re-arm state, so `_confirm_etu` can invalidate
+  a wrong rate again.
+- **Reject non-recurring minima.**  `_robust_min()` returns `None` (and
+  `_etu_candidate` maps it to a rejection) when no spacing recurs ≥3× — a
+  burst with no recurring period proves nothing.
+- **Idle-byte hardening.**  `_confirm_etu(parity_ok, byte)` no longer counts
+  an idle `0x00`/`0xFF` (parity-OK at any sampling rate) as a confirmation.
+
+Supporting changes needed to parse both ATRs: `_measure_etu()` abandons the
+burst if a line event re-armed the decoder while waiting for the start bit;
+the RST-assert handler re-sets `_clock_skip_confident` (the ATR is 372,
+ISO 7816-3 §8.1) and the hunt give-up path withdraws it; the RST assert sets
+`_last_sn = -1` so the same-sample exchange-abandon step is not mistaken for
+end-of-capture by `_at_eof()`.
+
+Validation: 163/163 unit tests (22 new, several verified to fail against
+v1.9.8); the 10-fixture trace suite is **identical** to the v1.9.8 baseline;
+Redmi coldboot (375/2/0/OK) and midsession unchanged; the swap fixture goes
+from 0 ATR / 6 APDU / 4 BAD_FCS / 314 CHKSUM to **2 ATR / 412 APDU /
+0 BAD_FCS / 1 CHKSUM / RESULT OK** (both ATRs parse, both PPS accepted to
+`clock_skip 16`, `clock_skip` never commits 465 or 83).  No reader-log ground
+truth exists for the swap fixture, so its correctness rests on structural
+validity + 0 GARBAGE/BAD_FCS/CONCAT.  VERSION -> 1.9.9.
+
 ### v1.9.8: ATR acceptance (interface vs historical parity) + apply TA1's F/D
 
 A Redmi Note 10 card runs at **F/D = 64** announced by TA1 = `0x94`
@@ -1071,7 +1142,7 @@ append the measured CLK frequency when known
 
 ### Versioning
 
-The decoder version is defined in `pd.py` as `VERSION = '1.9.8'`.
+The decoder version is defined in `pd.py` as `VERSION = '1.9.9'`.
 The version is printed to the log on decoder startup.
 
 ### Release packaging (v1.9.7)
