@@ -333,6 +333,61 @@ Known limitation: no on-disk fixture reproduces the exact live failure (all
 real captures contain a 372 ATR), so end-to-end proof needs a re-captured
 `.sr` from the failing phone; the unit tests cover the loop-escape logic.
 
+### v1.9.8: ATR acceptance (interface vs historical parity) + apply TA1's F/D
+
+A Redmi Note 10 card runs at **F/D = 64** announced by TA1 = `0x94`
+(ISO 7816-3 §8.3 Tables 7/8: Fi code `1001` = 512, Di code `0100` = 8)
+and switches to it at the end of the ATR **without a PPS exchange** — the
+only corpus fixture that does so (every other card PPS's to 16/32).  The
+decoder failed it two ways, reproduced on the three local fixtures
+`examples/redmi_note_10_{coldboot,midsession,swap}_sample.sr`:
+
+1. **ATR rejected on historical-byte parity.**  `handle_atr()` rejected the
+   whole ATR when *any* byte had a parity error.  On this card only two
+   historical bytes (`07`, `47`) and the TCK are bad; the interface
+   characters (TS/T0/TA1/TD1/TD2/TA3) are parity-clean.  The rejection now
+   keys off the interface-character window only (TS, T0, every
+   TAi/TBi/TCi/TDi): a parity error there still rejects the ATR (the
+   announced rate is untrustworthy), one in a historical character or the
+   TCK is a warning.  Grounding: ISO 7816-3 §8.2.5 makes a wrong TCK itself
+   invalid and says nothing about the interface characters; TS 102 221 §6.8
+   makes terminal error detection optional during ATR transmission;
+   spec-checker found **no clause** declaring a historical-character parity
+   error to invalidate the ATR.
+
+2. **TA1 never applied; clock_skip hard-coded 372.**  `ta1_clock_skip(ta1)`
+   derives `fi = clock_rate[ta1 >> 4]`, `di = baud_rate[ta1 & 0xF]` (the
+   same tables `handle_pps` uses) and returns the rate only when it is safe
+   to apply from the ATR alone — currently **64 only** (TA1 512/8).  The
+   other corpus cards announce 512/32=16 (xiaomi/4gmodem/alcor) or
+   512/16=32 (Samsung SIM1) and reach those rates via PPS, which
+   `handle_pps` already follows, so applying those TA1 values would break
+   the PPS-at-372 phase.  After `ENDATR`, a returned 64 sets
+   `clock_skip`/`bit_samples`/`_clock_skip_confident` exactly as the
+   post-PPS path does; it is not applied in `sample_as_clock`/`detect`
+   (there `bit_samples` is a measurement, not a table value).
+
+3. **Power-up noise packet at the old rate (CONCAT).**  Applying 64 fixed
+   the rate but left one CONCAT: a ~26 µs power-up noise burst following
+   the ATR reads as `00 e0 00 e0 e0` (P3=224) whose data phase swallows the
+   real `SELECT MF`.  A real T=0 command-data phase is one contiguous burst,
+   so a stall beyond `CMD_DATA_STALL_ETU` (1024 ETU) now drops the partial
+   packet and replays the byte after the stall.  Note: ISO bounds the card's
+   characters by the work waiting time but sets no bound on the interface
+   device's own characters (§10.3.1/§10.3.3 describe only a contiguous
+   transfer), so 1024 is a documented decoder heuristic, not a spec number;
+   the gate shows it never fires on the 10 fixtures.
+
+Validation: 141/141 unit tests (11 new: historical-byte parity accepted,
+interface-byte parity rejected, bad TCK accepted, TA1 `94`→64 / `96`→372 /
+`95`→372, the stall re-frame); the 10-fixture trace suite is **identical**
+to the v1.9.7 baseline (APDU/CHKSUM/CONCAT/BAD_FCS/GARBAGE/RESULT unchanged,
+test_8 56/0/OK, test_7 65/0/OK).  Redmi coldboot: 0 APDUs/760 CHKSUM/1
+CONCAT → **375 APDUs / CHKSUM 2 / 0 CONCAT / RESULT: OK**
+(`clock_skip 64 (Fi 512 Di 8)`); midsession unchanged; swap still 4
+BAD_FCS / CHKSUM 314 (the pre-existing wrong-ETU lock on the swap transient,
+not addressed here).  VERSION -> 1.9.8.
+
 ### v1.9.7: spec fixes, T=1/parity, EOF guards, dead code + rate scaling
 
 The audit's P2 items:
@@ -1016,7 +1071,7 @@ append the measured CLK frequency when known
 
 ### Versioning
 
-The decoder version is defined in `pd.py` as `VERSION = '1.9.7'`.
+The decoder version is defined in `pd.py` as `VERSION = '1.9.8'`.
 The version is printed to the log on decoder startup.
 
 ### Release packaging (v1.9.7)
