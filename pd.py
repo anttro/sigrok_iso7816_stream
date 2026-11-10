@@ -28,7 +28,7 @@ from .gsmtap_stream import (GsmtapStreamSender,
     GSMTAP_SIM_RST_EVENT, GSMTAP_SIM_VCC_EVENT,
     GSMTAP_FLAG_BAD_FCS)
 
-VERSION = '1.9.7'
+VERSION = '1.9.8'
 
 
 
@@ -386,6 +386,32 @@ T1_CHAIN_MAX = 32           # T=1 I-block M-bit chain depth bound
 ATR_HUNT_IDLE_RESETS = 3    # all-0xFF hunt resets before resuming DATA
 ATR_HUNT_FAIL_LIMIT = 12    # total failed hunt rounds before resuming DATA
 
+# TA1 transmission factors the decoder may apply straight after the ATR, as
+# CLK edges per bit (F/D).  ISO 7816-3 8.3 Tables 7/8 code Fi/Di in TA1 and
+# ETSI TS 102 221 6.3.2 makes (F,D) = (372,1), (512,8) and (512,16) the
+# rates the terminal and the UICC must support.  Only (512,8) = 64 is
+# applied: the corpus shows cards that switch to it at the end of the ATR
+# with no PPS exchange (Redmi Note 10, TA1 = 0x94), while every TA1 that
+# announces (512,16) = 32 (test_8/test_7/Samsung/A55/S21p, TA1 = 0x95) keeps
+# running at the 372 default in the captures and must be left to handle_pps()
+# or the live measurement.  (372,1) is the default and a no-op.
+# See Decoder.ta1_clock_skip().
+TA1_APPLICABLE_CLOCK_SKIP = (372, 64)
+
+# Maximum gap, in ETUs, tolerated inside a T=0 command-data phase.  The
+# terminal sends the header's P3 data bytes as one contiguous burst (only
+# the 12-etu guard time between characters, ISO 7816-3 7.2); ISO bounds the
+# *card*'s characters by the waiting time (WT = WI x 960 etu, 8.3/10.2) but
+# sets no bound on the interface device's own characters, so this value is a
+# decoder heuristic rather than a spec number.  It exists because a
+# mis-framed header (a noise burst read as CLA/INS/P1/P2/P3) otherwise
+# swallows the next real exchange as its "command data": live Redmi Note 10
+# cold boot, where ~16 frames of power-up noise read as `00 e0 00 e0 e0`
+# (P3 = 0xe0 = 224 data bytes) are followed by 27 ms of dead air and then
+# the real SELECT MF.
+CMD_DATA_STALL_ETU = 1024
+
+
 
 class Decoder(srd.Decoder):
     api_version = 3
@@ -505,6 +531,15 @@ class Decoder(srd.Decoder):
             self.put(self.ss, self.ss, self.out_ann,
                      [Ann.ANN_WARN, ["dropped 0x%02x: %s" % (value, reason)]])
         return value
+
+    def _cmd_data_stalled(self, prev_end):
+        '''True when the gap between the previous character's end and the
+        current character's start exceeds CMD_DATA_STALL_ETU (see its
+        definition above the Decoder class).'''
+        if prev_end is None or prev_end < 0 or self.ss < prev_end:
+            return False
+        bs = self.bit_samples or self._compute_bit_samples()
+        return (self.ss - prev_end) > CMD_DATA_STALL_ETU * bs
 
     def _note_pre_sw(self, value, reason):
         '''Log a byte consumed while scanning for the status word.
@@ -1042,6 +1077,35 @@ class Decoder(srd.Decoder):
         if self._samples_per_clock is not None:
             return int(self.clock_skip * self._samples_per_clock)
         return int(self.clock_skip * 3)
+
+    def ta1_clock_skip(self, ta1):
+        '''CLK edges per bit TA1 announces, when the decoder may apply it
+        right after the ATR; else None.
+
+        ISO 7816-3 8.3 Tables 7/8 split TA1 into Fi (b8-b5) and Di
+        (b4-b1) codes; clock_skip is Fi/Di.  Of the rates ETSI TS 102 221
+        6.3.2 makes mandatory -- (372,1) = 372, (512,8) = 64,
+        (512,16) = 32 -- only (512,8) may be applied from the ATR alone:
+        the corpus shows cards that (a) switch to that rate immediately
+        with no PPS (Redmi Note 10, TA1 0x94 -> 64) and (b) announce one of
+        the others but keep running at the default (test_8/test_7/A55/S21p
+        with TA1 0x95 -> 32, Xiaomi Mi A1 / 4G modem coldboots and the
+        alcor reader with TA1 0x96 -> 16).  Returning None for (b) leaves
+        372 in place so handle_pps()/the live measurement decides;
+        TA1_APPLICABLE_CLOCK_SKIP holds the applicable values and 372
+        itself is a no-op.'''
+        if ta1 is None:
+            return None
+        # .get() with spec defaults: an unknown/RFU Fi or Di code must not
+        # raise or divide by zero (same tables as handle_pps).
+        fi = self.clock_rate.get(ta1 >> 4, 372)
+        di = self.baud_rate.get(ta1 & 0x0F, 1)
+        if di == 0:
+            return None
+        skip = fi // di
+        if skip in TA1_APPLICABLE_CLOCK_SKIP:
+            return skip
+        return None
 
     def _derive_clock_skip_from_etu(self):
         '''Derive clock_skip (CLK edges per ETU) from the recovered ETU.
@@ -2011,6 +2075,18 @@ class Decoder(srd.Decoder):
             else:
                 firstT0 = 0;
 
+        # Interface-character window: TS, T0 and every TAi/TBi/TCi/TDi read
+        # above.  A parity error here makes the interface bytes (and hence
+        # TA1's F/D) untrustworthy, so the whole ATR is rejected below.  The
+        # historical characters and the TCK that follow are NOT part of this
+        # window: ISO 7816-3 8.2.5 only makes a wrong TCK itself invalid, and
+        # no clause rejects the ATR for a parity error in a historical
+        # character (TS 102 221 6.8 makes terminal error detection optional
+        # during ATR transmission).  Live case: a Redmi Note 10 ATR has two
+        # corrupted historical bytes and a bad TCK while its interface
+        # characters (TA1 = 0x94 -> F/D = 64) are clean.
+        interface_parity_errors = self._parity_errors
+
         for _ in range(0, t0 & 0x0F):
             byte = self.read_byte()
             if byte is None:
@@ -2031,9 +2107,16 @@ class Decoder(srd.Decoder):
                 self.put(atr_start, self.samplenum, self.out_ann, [0, ["Invalid TCK in ATR, got={tck:02x} expected={xor:02x}".format(tck=byte,xor=xor)]])
                 self.log("Invalid TCK in ATR", hex(byte), hex(xor))    
 
-        if self._parity_errors != bad_parity_before:
-            # A real ATR is parity-clean; a data run misread at a frame
-            # boundary is not.  Ignore the ATR instead of committing 372.
+        if self._parity_errors != interface_parity_errors:
+            # A parity error in the historical characters or the TCK is a
+            # warning, not a rejection (see the interface window above).
+            self.log("ATR accepted with parity error(s) after the interface "
+                     "characters (historical/TCK):",
+                     codecs.encode(bytes(self.ATR), 'hex'))
+        if interface_parity_errors != bad_parity_before:
+            # A real ATR's interface characters are parity-clean; a data run
+            # misread at a frame boundary is not.  Ignore the ATR instead of
+            # committing 372.
             self.log("ATR rejected: parity error(s) in",
                      codecs.encode(bytes(self.ATR), 'hex'))
             self.state = 'DATA'
@@ -2080,6 +2163,36 @@ class Decoder(srd.Decoder):
         self._resync = True  # Wait for inter-frame idle gap before reading commands
         # PPS may be attempted once after this ATR.
         self._pps_attempted = False
+
+        # ISO 7816-3 6.3.1/8.3: TA1 announces the card's (F, D) transmission
+        # factors.  A card that switches to (512,8) = 64 CLK/bit at the end
+        # of the ATR with no PPS exchange (live Redmi Note 10: TA1 =
+        # 0x94 -> Fi=512/Di=8 -> 64) would otherwise have every post-ATR
+        # byte read at 372, so ta1_clock_skip() returns 64 here.  Every
+        # other TA1 is left at 372: the card either sends a PPS request at
+        # the default rate (alcor reader: `ff` -> handle_pps) or keeps
+        # running at the default rate and decodes cleanly at 372 (test_8/
+        # test_7/A55/S21p TA1 = 0x95 -> 32, Xiaomi Mi A1 / 4G modem
+        # coldboots TA1 = 0x96 -> 16); applying those up front would
+        # mis-frame the traffic they carry.
+        if tA:
+            skip = self.ta1_clock_skip(tA[0])
+            # Native CLK only: there clock_skip is protocol-defined (CLK
+            # edges per bit) and the CLK-sync reader uses it.  In
+            # sample_as_clock/detect the ETU comes from a DATA measurement,
+            # so overriding bit_samples from a table would replace a
+            # measured value with a guess.
+            if (skip is not None and skip != self.clock_skip
+                    and not (self.sample_as_clock or self.detect_clock)):
+                fi = self.clock_rate.get(tA[0] >> 4, 372)
+                di = self.baud_rate.get(tA[0] & 0x0F, 1)
+                self.fi = fi
+                self.di = di
+                self.clock_skip = skip
+                self.bit_samples = self.clock_skip * (self._samples_per_clock or 3)
+                self._clock_skip_confident = True
+                self.log("TA1 F/D applied: clock_skip", skip,
+                         "(Fi", fi, "Di", di, ")")
 
         if (self.options['protocol'] == "T=0"):
             self.hasT0 = True
@@ -2781,8 +2894,25 @@ class Decoder(srd.Decoder):
                         # Case 3/4: P3 command-data bytes, then
                         # procedure byte.
                         for _ in range(max(p3 - 1, 0)):
+                            prev_end = self.es
                             b = self.read_byte()
                             if b is None:
+                                return True
+                            if self._cmd_data_stalled(prev_end):
+                                # The data phase broke off after less than
+                                # P3 bytes: the header was a mis-framed noise
+                                # burst, and this byte belongs to the next
+                                # exchange.  Drop the bogus partial packet
+                                # (nothing was emitted yet), replay the byte
+                                # and re-align on the following exchange
+                                # instead of swallowing it as command data.
+                                self._note_discard(
+                                    b, 'command-data phase stalled; header '
+                                    'mis-framed', idle=False)
+                                self._replay.appendleft(b)
+                                self.peeked_samplenum = self.ss
+                                self.peeked_byte = None
+                                self._resync = True
                                 return True
                             packet.append(b)
                         for _proc in range(32):

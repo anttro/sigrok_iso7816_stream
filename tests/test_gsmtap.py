@@ -1031,7 +1031,7 @@ class TestLineEventPayload(unittest.TestCase):
         self.assertEqual(self.pd.LINE_EVENT_FLAG_CLK_HZ, 0x01)
 
 
-class TestDecodeStep(unittest.TestCase):
+class _DataHarness:
     """Byte-replay harness for the DATA-state gate chain in decode_step().
 
     The rest of the suite exercises only pure functions and leaf methods;
@@ -1041,9 +1041,7 @@ class TestDecodeStep(unittest.TestCase):
     in the predicates.
     """
 
-    @classmethod
-    def setUpClass(cls):
-        cls.gs, cls.pd = _load_iso7816()
+    pd = None
 
     def _make(self, byte_seq):
         inst = object.__new__(self.pd.Decoder)
@@ -1096,6 +1094,12 @@ class TestDecodeStep(unittest.TestCase):
         inst.wait = lambda cond=None: [1] * 8
         return inst
 
+
+class TestDecodeStep(_DataHarness, unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.gs, cls.pd = _load_iso7816()
+
     def test_9e_9f_are_status_words(self):
         # ISO 7816-3 10.3.3 Table 11: '9X' is SW1.  The old code treated
         # 9E/9F as an "extended-length" procedure byte and consumed SW2 as
@@ -1142,6 +1146,68 @@ class TestDecodeStep(unittest.TestCase):
         self.assertEqual(inst.emitted,
                          [(bytes.fromhex('e2f20000009000'), 0)])
         self.assertEqual(inst.discarded, [])
+
+    def test_command_data_stall_drops_the_mis_framed_header(self):
+        # A noise burst read as the header 00 e0 00 e0 e0 (P3 = 0xe0 = 224
+        # data bytes) followed by dead air must not swallow the next real
+        # exchange as command data (live Redmi Note 10 cold boot).  The
+        # partial packet is dropped, the first byte after the stall is
+        # replayed, and the next decode step frames the real SELECT.
+        header = bytes.fromhex('00e000e0e0')
+        junk = bytes.fromhex('0000')
+        real = bytes.fromhex('00a40000023f009000')
+        inst = self._make(header + junk + real)
+        orig = inst.read_byte
+        state = {'n': 0}
+
+        def read():
+            b = orig()
+            if b is None:
+                return None
+            state['n'] += 1
+            # Model one character per 10 ETU, with a long dead period
+            # before the first data byte after the stall.
+            inst.samplenum += 10 * inst.bit_samples
+            if state['n'] == 8:
+                inst.samplenum += 2 * self.pd.CMD_DATA_STALL_ETU * \
+                    inst.bit_samples
+            inst.ss = inst.samplenum
+            inst.es = inst.samplenum + 10 * inst.bit_samples
+            return b
+
+        inst.read_byte = read
+        self.assertTrue(inst.decode_step())
+        self.assertEqual(inst.emitted, [])          # bogus packet dropped
+        self.assertTrue(inst._resync)
+        self.assertEqual(list(inst._replay), [0x00])
+        self.assertEqual(len(inst.discarded), 1)
+        self.assertIn('stalled', inst.discarded[0][1])
+        # The replayed byte starts the real SELECT; it frames clean.
+        inst._resync = False
+        inst.emitted = []
+        self.assertTrue(inst.decode_step())
+        self.assertEqual(inst.emitted, [(real, 0)])
+
+    def test_command_data_contiguous_burst_is_not_stalled(self):
+        # The same header with its data completed inside the stall window
+        # stays a normal (case-3/4) exchange: no false trigger.
+        inst = self._make(bytes.fromhex('00e000e0e0') + bytes(0xe0)
+                          + bytes.fromhex('9000'))
+        orig = inst.read_byte
+
+        def read():
+            b = orig()
+            if b is None:
+                return None
+            inst.samplenum += 10 * inst.bit_samples
+            inst.ss = inst.samplenum
+            inst.es = inst.samplenum + 10 * inst.bit_samples
+            return b
+
+        inst.read_byte = read
+        self.assertTrue(inst.decode_step())
+        self.assertEqual(len(inst.emitted), 1)
+        self.assertEqual(len(inst._replay), 0)
 
     def test_bit_dense_valid_cla_is_not_idle_noise(self):
         # 0x5F was accepted by plausible_cla() all along but always
@@ -1283,13 +1349,10 @@ class TestDecodeStep(unittest.TestCase):
                          [(bytes.fromhex('00b0000000' + payload + '9000'), 0)])
 
 
-class TestAtrHuntDetect(unittest.TestCase):
-    """The ATR-hunt command-detect handoff in handle_atr(), driven by a
-    scripted byte queue (the hunt logic itself is not otherwise covered)."""
+class _AtrHarness:
+    """Scripted-byte harness for handle_atr() (hunt handoff, TA1/parity)."""
 
-    @classmethod
-    def setUpClass(cls):
-        cls.gs, cls.pd = _load_iso7816()
+    pd = None
 
     def _make(self, byte_seq):
         inst = object.__new__(self.pd.Decoder)
@@ -1329,6 +1392,15 @@ class TestAtrHuntDetect(unittest.TestCase):
         inst.log = lambda *a, **k: None
         inst.wait = lambda cond=None: [1] * 8
         return inst
+
+
+class TestAtrHuntDetect(_AtrHarness, unittest.TestCase):
+    """The ATR-hunt command-detect handoff in handle_atr(), driven by a
+    scripted byte queue (the hunt logic itself is not otherwise covered)."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.gs, cls.pd = _load_iso7816()
 
     def test_handoff_on_extended_channel_cla(self):
         # 0xC4 (channel 8, no SM) + 0xA4 (SELECT): a command header, not a
@@ -1417,6 +1489,122 @@ class TestAtrHuntDetect(unittest.TestCase):
         self.assertFalse(inst._atr_parsed)
         self.assertEqual(inst.emitted, [])
         self.assertEqual(inst.state, 'DATA')
+
+
+class TestAtrInterfaceParityAndTa1(_AtrHarness, unittest.TestCase):
+    """ATR acceptance (interface vs historical parity) and TA1's F/D.
+
+    Fixture: the live Redmi Note 10 ATR.  TS=3B, T0=9F (TA1 + TD1, K=15),
+    TA1=94 (Fi 512 / Di 8 -> 64 CLK/bit, ISO 7816-3 8.3 Tables 7/8),
+    TD1=80 (T=0, TD2 present, TA2 absent), TD2=1F (T=15, TA3 present),
+    TA3=C7, 15 historical bytes, TCK=FF (invalid: XOR is 0x11).
+    """
+
+    REDMI_ATR = bytes.fromhex(
+        '3b9f94801fc78031a0ee2d6cdc070607475e0106c7ff')
+    XIAOMI_ATR = bytes.fromhex(
+        '3b9f96801fc78031e073fe2117574a3382033339001e')  # TA1=96 -> 16
+
+    @classmethod
+    def setUpClass(cls):
+        cls.gs, cls.pd = _load_iso7816()
+
+    def _inject_parity_on(self, inst, value):
+        orig = inst.read_byte
+
+        def read():
+            b = orig()
+            if b == value:
+                inst._parity_errors += 1
+            return b
+
+        inst.read_byte = read
+
+    def test_historical_byte_parity_error_is_a_warning_not_a_rejection(self):
+        # No clause rejects an ATR for a parity error in a historical
+        # character (TS 102 221 6.8 makes terminal error detection optional
+        # during ATR transmission); only the interface characters carry the
+        # rate.  0x5E is a historical byte of the Redmi ATR.
+        inst = self._make(list(self.REDMI_ATR))
+        self._inject_parity_on(inst, 0x5E)
+        inst.handle_atr(None)
+        self.assertTrue(inst._atr_parsed)
+        self.assertEqual(bytes(inst.ATR), self.REDMI_ATR)
+        self.assertEqual(len(inst.emitted), 1)
+        self.assertEqual(inst.clock_skip, 64)
+
+    def test_interface_byte_parity_error_still_rejects(self):
+        # TA1 carries Fi/Di: a parity error there makes the announced rate
+        # untrustworthy, so the ATR is still ignored.
+        inst = self._make(list(self.REDMI_ATR))
+        self._inject_parity_on(inst, 0x94)
+        inst.handle_atr(None)
+        self.assertFalse(inst._atr_parsed)
+        self.assertEqual(inst.emitted, [])
+        self.assertEqual(inst.state, 'DATA')
+
+    def test_td_byte_parity_error_still_rejects(self):
+        # The interface characters include every TAi/TBi/TCi/TDi: TD2 = 0x1F
+        # (T=15 + TA3) must reject too (the TCK presence depends on it).
+        inst = self._make(list(self.REDMI_ATR))
+        self._inject_parity_on(inst, 0x1F)
+        inst.handle_atr(None)
+        self.assertFalse(inst._atr_parsed)
+        self.assertEqual(inst.emitted, [])
+
+    def test_bad_tck_does_not_reject_the_atr(self):
+        # ISO 7816-3 8.2.5 makes a wrong TCK itself invalid and says nothing
+        # about the interface characters; the Redmi TCK is 0xFF (XOR 0x11).
+        inst = self._make(list(self.REDMI_ATR))
+        inst.handle_atr(None)
+        self.assertTrue(inst._atr_parsed)
+        self.assertEqual(bytes(inst.ATR), self.REDMI_ATR)
+
+    def test_ta1_512_8_applies_64(self):
+        # TA1 = 0x94 -> Fi 512 / Di 8 = 64 CLK/bit; the live Redmi switches
+        # to it at the end of the ATR with no PPS exchange.
+        inst = self._make(list(self.REDMI_ATR))
+        inst.handle_atr(None)
+        self.assertEqual(inst.clock_skip, 64)
+        self.assertEqual(inst.bit_samples, 64 * 4.0)
+        self.assertEqual((inst.fi, inst.di), (512, 8))
+        self.assertTrue(inst._clock_skip_confident)
+
+    def test_ta1_512_32_is_left_at_372(self):
+        # TA1 = 0x96 -> 512/32 = 16.  The Xiaomi Mi A1 / 4G modem cold boots
+        # and the alcor reader carry this ATR: the cards keep the 372 default
+        # (or PPS to 16 at 372), so applying TA1 would mis-frame them.
+        inst = self._make(list(self.XIAOMI_ATR))
+        inst.handle_atr(None)
+        self.assertEqual(inst.clock_skip, 372)
+        self.assertEqual(inst.bit_samples, 372 * 4.0)
+
+    def test_ta1_512_16_is_left_at_372(self):
+        # TA1 = 0x95 -> 512/16 = 32.  test_8/test_7 and the A55/S21p cold
+        # boots announce it but run at 372 (0 CHKSUM with no PPS): 32 must
+        # not be applied either.
+        atr = bytes.fromhex('3b9f95801fc78031e073fe21136364035b83079000f7')
+        inst = self._make(list(atr))
+        inst.handle_atr(None)
+        self.assertEqual(inst.clock_skip, 372)
+
+    def test_ta1_default_372_is_a_noop(self):
+        # (Fi, Di) = (372, 1) is the default TA1 announces nothing new.
+        inst = self._make([0x3B, 0x11, 0x01, 0x00, 0x00])
+        self.assertEqual(inst.ta1_clock_skip(0x11), 372)
+        inst.handle_atr(None)
+        self.assertEqual(inst.clock_skip, 372)
+
+    def test_ta1_table_vectors(self):
+        inst = self._make([])
+        # (Fi, Di) -> F/D from ISO 7816-3 Tables 7/8, restricted to the
+        # rates the decoder applies from the ATR alone.
+        self.assertEqual(inst.ta1_clock_skip(0x94), 64)   # 512/8
+        self.assertIsNone(inst.ta1_clock_skip(0x96))      # 512/32 = 16
+        self.assertIsNone(inst.ta1_clock_skip(0x95))      # 512/16 = 32
+        self.assertIsNone(inst.ta1_clock_skip(0x93))      # 512/4  = 128
+        self.assertEqual(inst.ta1_clock_skip(0x00), 372)  # 372/1 (default)
+        self.assertEqual(inst.ta1_clock_skip(0xF1), 372)  # RFU Fi -> 372/1
 
 
 if __name__ == '__main__':
