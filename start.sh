@@ -6,7 +6,21 @@ CLK=D5
 DATA=D0
 RST=D4
 VCC=D2
-SAMPLERATE=16M
+# Samplerate source, highest to lowest precedence:
+#   --samplerate CLI arg (parsed below)
+#   config file      (setup.sh's drain test writes it on hosts that can't do 16M)
+#   $SIGROK_SAMPLERATE  (service override)
+#   16M              (default when no config/env)
+CONFIG_DIR="${XDG_CONFIG_HOME:-${HOME}/.config}/sigrok_iso7816_stream"
+CONFIG_FILE="${CONFIG_DIR}/samplerate"
+SAMPLERATE=""
+if [ -f "${CONFIG_FILE}" ]; then
+    SAMPLERATE="$(tr -d '[:space:]' < "${CONFIG_FILE}")"
+fi
+if [ -z "${SAMPLERATE}" ] && [ -n "${SIGROK_SAMPLERATE:-}" ]; then
+    SAMPLERATE="${SIGROK_SAMPLERATE}"
+fi
+SAMPLERATE="${SAMPLERATE:-16M}"
 CLOCK=native
 HOST=127.0.0.1
 PORT=4729

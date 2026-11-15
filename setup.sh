@@ -118,6 +118,8 @@ fi
 # early stop means the host cannot drain that rate.
 DRAIN_DURATION_MS=15000
 CANDIDATES_MHZ="24 20 16 12 8 4 2 1"
+CONFIG_DIR="${XDG_CONFIG_HOME:-${HOME}/.config}/sigrok_iso7816_stream"
+CONFIG_FILE="${CONFIG_DIR}/samplerate"
 
 drain_survives() {  # $1 = rate string ("16M"), $2 = budget ms
     local rate="$1" budget_ms="$2" start_ms elapsed_ms
@@ -155,9 +157,20 @@ if [ -n "${MAX_RATE}" ] && [ -z "${DEVICE_MSG}" ]; then
         if [ -n "${SUSTAINABLE}" ]; then
             echo "Highest sustainable rate: ${SUSTAINABLE}M"
             if [ "${SUSTAINABLE}" -lt 16 ]; then
-                echo "  start.sh defaults to 16M. Override on this host:"
-                echo "    ./start.sh --samplerate=${SUSTAINABLE}M"
-                echo "    (or set SIGROK_SAMPLERATE=${SUSTAINABLE}M for the capture service)"
+                printf 'This host cannot sustain the 16M default. Write a config\n'
+                printf '  pinning %sM in %s? [y/N] ' "${SUSTAINABLE}" "${CONFIG_FILE}"
+                read -r ans || true
+                case "${ans}" in
+                    [Yy]*)
+                        mkdir -p "${CONFIG_DIR}"
+                        printf '%sM\n' "${SUSTAINABLE}" > "${CONFIG_FILE}"
+                        echo "Wrote ${CONFIG_FILE}; start.sh will use ${SUSTAINABLE}M."
+                        ;;
+                    *)
+                        echo "Config not written; start.sh will keep trying 16M here."
+                        echo "  Per-run override: ./start.sh --samplerate=${SUSTAINABLE}M"
+                        ;;
+                esac
             fi
         else
             echo "No rate survived ${DRAIN_DURATION_MS} ms - device or host problem."

@@ -62,6 +62,9 @@ system-wide ones), and probes the connected device for its maximum supported
 samplerate.  It then asks whether to run a long CPU drain test that finds the
 highest *sustainable* rate (a slow host can accept 16M but not drain it); skip
 it on a fast machine, or run it with `setup.sh --drain-test` to skip the prompt.
+If the test finds the host cannot sustain 16M, it offers to write a config file
+(`~/.config/sigrok_iso7816_stream/samplerate`) that `start.sh` reads; without it
+`start.sh` assumes 16M (or the `$SIGROK_SAMPLERATE` override).
 
 #### Windows (download)
 

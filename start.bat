@@ -9,7 +9,15 @@ set "CLK=D5"
 set "DATA=D0"
 set "RST=D4"
 set "VCC=D2"
-set "SAMPLERATE=16M"
+rem Samplerate source, highest to lowest precedence:
+rem   --samplerate arg (below)  >  config file  >  SIGROK_SAMPLERATE env  >  16M
+set "CONFIG_FILE=%APPDATA%\sigrok_iso7816_stream\samplerate"
+set "SAMPLERATE="
+if exist "%CONFIG_FILE%" (
+    set /p "SAMPLERATE=" <"%CONFIG_FILE%"
+)
+if "%SAMPLERATE%"=="" if defined SIGROK_SAMPLERATE set "SAMPLERATE=%SIGROK_SAMPLERATE%"
+if "%SAMPLERATE%"=="" set "SAMPLERATE=16M"
 set "CLOCK=native"
 set "HOST=127.0.0.1"
 set "PORT=4729"

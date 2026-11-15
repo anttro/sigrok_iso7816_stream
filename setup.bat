@@ -124,6 +124,7 @@ rem seconds in, even though the rate was accepted.  Ask first: on a fast
 rem machine it is wasted time.  Each candidate runs up to 15s; an early stop
 rem means the host cannot drain that rate.
 set "DRAIN_DURATION_MS=15000"
+set "CONFIG_FILE=%APPDATA%\sigrok_iso7816_stream\samplerate"
 if defined MAX_RATE if not defined DEVICE_MSG if /i not "!DRAIN_TEST!"=="force" (
     echo.
     set /p "ANS=Run a long CPU drain test to find the highest sustainable rate? (skip on fast machines) [y/N]: "
@@ -149,9 +150,17 @@ if defined MAX_RATE if not defined DEVICE_MSG if /i "!DRAIN_TEST!"=="yes" (
     if defined SUSTAINABLE (
         echo Highest sustainable rate: !SUSTAINABLE!M
         if !SUSTAINABLE! LSS 16 (
-            echo   start.bat defaults to 16M. Override on this host:
-            echo     start.bat --samplerate !SUSTAINABLE!M
-            echo     ^(or set SIGROK_SAMPLERATE=!SUSTAINABLE!M for the capture service^)
+            echo This host cannot sustain the 16M default.
+            set /p "ANS=Write a config pinning !SUSTAINABLE!M? [y/N]: "
+            echo !ANS! | findstr /i /b "y" >nul
+            if not errorlevel 1 (
+                if not exist "%APPDATA%\sigrok_iso7816_stream" mkdir "%APPDATA%\sigrok_iso7816_stream"
+                >"%CONFIG_FILE%" echo !SUSTAINABLE!M
+                echo Wrote config; start.bat will use !SUSTAINABLE!M.
+            ) else (
+                echo Config not written; start.bat will keep trying 16M here.
+                echo   Per-run override: start.bat --samplerate !SUSTAINABLE!M
+            )
         )
     ) else (
         echo No rate survived !DRAIN_DURATION_MS! ms - device or host problem.
