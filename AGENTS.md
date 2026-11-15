@@ -333,6 +333,20 @@ Known limitation: no on-disk fixture reproduces the exact live failure (all
 real captures contain a 372 ATR), so end-to-end proof needs a re-captured
 `.sr` from the failing phone; the unit tests cover the loop-escape logic.
 
+### v2.1.0: samplerate drain test + per-host config (scripts/docs, no decoder change)
+
+`start.sh`/`start.bat` now resolve the samplerate as `--samplerate` arg >
+config file (`~/.config/sigrok_iso7816_stream/samplerate`, or
+`%APPDATA%\sigrok_iso7816_stream\samplerate`) > `$SIGROK_SAMPLERATE` env >
+**16M** default.  `setup.sh`/`setup.bat` gained an optional long-duration CPU
+drain test (prompt; `--drain-test` forces it): the FX2 has no sample buffer, so
+on a host that cannot drain a rate the device stops on its own a few seconds
+in; the test runs each candidate up to 15 s and treats an early stop (< 70% of
+the budget) as unsustainable.  When the highest sustainable rate is below 16M
+it asks whether to write the config file pinning that rate; if the file is
+missing, 16M is assumed.  READMEs document the prompt and the flag.  No change
+to `pd.py` decoding logic; VERSION -> 2.1.0 for the release.
+
 ### v2.0.0: card-swap desync — stale clock period, atomic RST re-arm, ETU sanity
 
 Shipped as **2.0.0** (a major bump): v1.9.8 and v1.9.9 were developed back to
@@ -1146,10 +1160,10 @@ append the measured CLK frequency when known
 
 ### Versioning
 
-The decoder version is defined in `pd.py` as `VERSION = '2.0.0'`.
+The decoder version is defined in `pd.py` as `VERSION = '2.1.0'`.
 The version is printed to the log on decoder startup.
 
-### Release packaging (v2.0.0)
+### Release packaging (v2.1.0)
 
 The GitHub release archives let users run the decoder without cloning the
 repo.  `./tools/build_release.sh [REF]` (REF defaults to `HEAD`) builds
@@ -1185,7 +1199,7 @@ no release yet) followed by `gh release edit --draft=false`, with
 `release-<tag>` concurrency.  The workflow prepends a standard install block
 to the generated notes: release package (recommended; Linux tar.gz / Windows
 zip, setup/start, SHA256SUMS) and source checkout (development).  **Release
-process:** commit the docs, workflow and scripts first, then tag `v2.0.0` and
+process:** commit the docs, workflow and scripts first, then tag `v2.1.0` and
 push the tag (with user approval) - the workflow must exist in the tagged
 commit, and the archive ships the committed READMEs.  The changelog itself is
 GitHub's auto-generated notes from the commits; `AGENTS.md` and `tests/` are

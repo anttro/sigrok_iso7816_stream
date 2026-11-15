@@ -28,7 +28,7 @@ from .gsmtap_stream import (GsmtapStreamSender,
     GSMTAP_SIM_RST_EVENT, GSMTAP_SIM_VCC_EVENT,
     GSMTAP_FLAG_BAD_FCS)
 
-VERSION = '2.0.0'
+VERSION = '2.1.0'
 
 
 
