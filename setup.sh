@@ -2,6 +2,22 @@
 # sigrok_iso7816_stream setup: verify sigrok-cli and register the decoder.
 set -euo pipefail
 
+DRAIN_TEST=""
+case "${1:-}" in
+    --drain-test) DRAIN_TEST="force" ;;
+    --help|-h)
+        echo "Usage: $0 [--drain-test]"
+        echo "  --drain-test  run the long CPU drain test without prompting"
+        exit 0
+        ;;
+    "")
+        ;;
+    *)
+        echo "Unknown option: $1 (see --help)" >&2
+        exit 1
+        ;;
+esac
+
 REPO_DIR="$(cd "$(dirname "$0")" && pwd)"
 DECODERS_DIR="${HOME}/.local/share/libsigrokdecode/decoders"
 LINK="${DECODERS_DIR}/iso7816"
@@ -92,6 +108,61 @@ elif [ -n "${MAX_RATE}" ]; then
     fi
 else
     echo "unknown (device present but no rate accepted)"
+fi
+
+# --- optional long-duration CPU drain test -------------------------------
+# The probe above only checks whether the *device* accepts a rate.  On a slow
+# host the FX2 FIFO overflows and the device stops on its own a few seconds in,
+# even though the rate was accepted.  Ask before running: on a known-fast
+# machine it is wasted time.  Each candidate runs up to DRAIN_DURATION_MS; an
+# early stop means the host cannot drain that rate.
+DRAIN_DURATION_MS=15000
+CANDIDATES_MHZ="24 20 16 12 8 4 2 1"
+
+drain_survives() {  # $1 = rate string ("16M"), $2 = budget ms
+    local rate="$1" budget_ms="$2" start_ms elapsed_ms
+    start_ms="$(date +%s%3N)"
+    sigrok-cli -d fx2lafw --config "samplerate=${rate}" --continuous \
+        --time "${budget_ms}" -P 'iso7816:clk=D0:data=D1' >/dev/null 2>&1 || true
+    elapsed_ms="$(( $(date +%s%3N) - start_ms ))"
+    [ "${elapsed_ms}" -ge $(( budget_ms * 70 / 100 )) ]
+}
+
+if [ -n "${MAX_RATE}" ] && [ -z "${DEVICE_MSG}" ]; then
+    if [ "${DRAIN_TEST}" != "force" ]; then
+        printf '\nRun a long CPU drain test to find the highest *sustainable* rate?\n'
+        printf '  (skip on known-fast machines; ~15s per rate on slow ones) [y/N] '
+        read -r ans || true
+        case "${ans}" in
+            [Yy]*) DRAIN_TEST="yes" ;;
+            *)     DRAIN_TEST="no" ;;
+        esac
+    fi
+    if [ "${DRAIN_TEST}" = "yes" ] || [ "${DRAIN_TEST}" = "force" ]; then
+        MAX_MHZ="${MAX_RATE%M}"
+        SUSTAINABLE=""
+        echo "Drain test (an early stop means the host cannot keep up):"
+        for mhz in ${CANDIDATES_MHZ}; do
+            [ "${mhz}" -le "${MAX_MHZ}" ] || continue
+            printf '  %sM ... ' "${mhz}"
+            if drain_survives "${mhz}M" "${DRAIN_DURATION_MS}"; then
+                echo "sustained"
+                SUSTAINABLE="${mhz}"
+                break
+            fi
+            echo "stopped early"
+        done
+        if [ -n "${SUSTAINABLE}" ]; then
+            echo "Highest sustainable rate: ${SUSTAINABLE}M"
+            if [ "${SUSTAINABLE}" -lt 16 ]; then
+                echo "  start.sh defaults to 16M. Override on this host:"
+                echo "    ./start.sh --samplerate=${SUSTAINABLE}M"
+                echo "    (or set SIGROK_SAMPLERATE=${SUSTAINABLE}M for the capture service)"
+            fi
+        else
+            echo "No rate survived ${DRAIN_DURATION_MS} ms - device or host problem."
+        fi
+    fi
 fi
 
 echo "Done. Run ./start.sh to begin capture."

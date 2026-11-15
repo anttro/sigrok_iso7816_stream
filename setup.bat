@@ -2,6 +2,14 @@
 rem sigrok_iso7816_stream setup (Windows): verify sigrok-cli, register decoder.
 setlocal EnableExtensions EnableDelayedExpansion
 
+set "DRAIN_TEST="
+if /i "%~1"=="--drain-test" set "DRAIN_TEST=force"
+if /i "%~1"=="--help" (
+    echo Usage: setup.bat [--drain-test]
+    echo   --drain-test  run the long CPU drain test without prompting
+    exit /b 0
+)
+
 set "REPO_DIR=%~dp0"
 if "%REPO_DIR:~-1%"=="\" set "REPO_DIR=%REPO_DIR:~0,-1%"
 set "DEC_DIR=%LOCALAPPDATA%\libsigrokdecode\decoders"
@@ -107,6 +115,47 @@ if defined MAX_RATE (
     echo Highest accepted samplerate: !MAX_RATE!
 ) else if not defined MAX_RATE if not defined DEVICE_MSG (
     echo unknown - device present but no rate accepted
+)
+
+rem ---- optional long-duration CPU drain test ----------------------------
+rem The probe above only checks whether the *device* accepts a rate.  On a
+rem slow host the FX2 FIFO overflows and the device stops on its own a few
+rem seconds in, even though the rate was accepted.  Ask first: on a fast
+rem machine it is wasted time.  Each candidate runs up to 15s; an early stop
+rem means the host cannot drain that rate.
+set "DRAIN_DURATION_MS=15000"
+if defined MAX_RATE if not defined DEVICE_MSG if /i not "!DRAIN_TEST!"=="force" (
+    echo.
+    set /p "ANS=Run a long CPU drain test to find the highest sustainable rate? (skip on fast machines) [y/N]: "
+    echo !ANS! | findstr /i /b "y" >nul && set "DRAIN_TEST=yes"
+)
+if /i "!DRAIN_TEST!"=="force" set "DRAIN_TEST=yes"
+
+if defined MAX_RATE if not defined DEVICE_MSG if /i "!DRAIN_TEST!"=="yes" (
+    echo Drain test ^(an early stop means the host cannot keep up^):
+    set "MAX_MHZ=!MAX_RATE:~0,-1!"
+    set /a "MIN_ELAPSED=!DRAIN_DURATION_MS!*70/100"
+    for %%m in (24 20 16 12 8 4 2 1) do (
+        if not defined SUSTAINABLE if %%m LEQ !MAX_MHZ! (
+            for /f "usebackq" %%e in (`powershell -NoProfile -Command "$sw=[Diagnostics.Stopwatch]::StartNew(); & sigrok-cli -d fx2lafw --config samplerate=%%mM --continuous --time !DRAIN_DURATION_MS! -P 'iso7816:clk=D0:data=D1' *>$null; $sw.Stop(); $sw.ElapsedMilliseconds"`) do set "ELAPSED=%%e"
+            if !ELAPSED! GEQ !MIN_ELAPSED! (
+                set "SUSTAINABLE=%%m"
+                echo   %%mM sustained
+            ) else (
+                echo   %%mM stopped early
+            )
+        )
+    )
+    if defined SUSTAINABLE (
+        echo Highest sustainable rate: !SUSTAINABLE!M
+        if !SUSTAINABLE! LSS 16 (
+            echo   start.bat defaults to 16M. Override on this host:
+            echo     start.bat --samplerate !SUSTAINABLE!M
+            echo     ^(or set SIGROK_SAMPLERATE=!SUSTAINABLE!M for the capture service^)
+        )
+    ) else (
+        echo No rate survived !DRAIN_DURATION_MS! ms - device or host problem.
+    )
 )
 
 echo.

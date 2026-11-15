@@ -59,7 +59,9 @@ cd sigrok_iso7816_stream-<version>
 (`sigrok-firmware-fx2lafw`) are installed, symlinks the project directory into
 `~/.local/share/libsigrokdecode/decoders/iso7816` (user-local decoders shadow
 system-wide ones), and probes the connected device for its maximum supported
-samplerate.
+samplerate.  It then asks whether to run a long CPU drain test that finds the
+highest *sustainable* rate (a slow host can accept 16M but not drain it); skip
+it on a fast machine, or run it with `setup.sh --drain-test` to skip the prompt.
 
 #### Windows (download)
 
